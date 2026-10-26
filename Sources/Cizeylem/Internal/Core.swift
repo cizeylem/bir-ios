@@ -551,6 +551,11 @@ actor Core {
         guard consent.allowsWrite else { return }
         userId = nil
         identityStore.clear()
+        // `reset()` "bu kullanıcıyı unut" demektir ve burada bir KULLANICI SINIRI vardır:
+        // eski kullanıcının bekleyen `$set`/`$set_once`/`$add`/`$unset` operasyonlarını yeni
+        // anonim kimliğe yazmak kullanıcılar arası veri sızıntısı olurdu. `bir-js` bunları
+        // temizlemiyor (aynı kusur orada da var); bilinçli sapma.
+        pending = Pending()
         let fresh = deps.uuid()
         deviceIdStore.write(fresh)
         if deviceIdStore.read() != fresh {

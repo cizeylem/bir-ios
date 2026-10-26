@@ -638,6 +638,31 @@ final class CizeylemTests: XCTestCase {
         await c2.shutdown()
     }
 
+    func testResetBekleyenPropertyleriDeTemizler() async {
+        // Kullanıcı sınırı: eski kullanıcının bekleyen operasyonları YENİ anonim kimliğe
+        // yazılamaz. `bir-js` bunu temizlemiyor; bilinçli sapma (kullanıcılar arası sızıntı).
+        let net = Net()
+        let c = core(net)
+        await grant(c)
+        await c.setUserProperties(["plan": .string("pro")])
+        await c.setUserPropertiesOnce(["ilk": .string("evet")])
+        await c.addUserProperties(["sayac": 3])
+        await c.unsetUserProperties(["eski"])
+
+        await c.reset()
+        await c.track("reset_sonrasi")
+        await c.flush()
+
+        let evs = await net.events.filter { $0.name == "reset_sonrasi" }
+        XCTAssertEqual(evs.count, 1)
+        XCTAssertEqual(evs[0].set, [:], "eski kullanıcının $set'i yeni kimliğe sızmaz")
+        XCTAssertEqual(evs[0].setOnce, [:], "$set_once sızmaz")
+        XCTAssertEqual(evs[0].add, [:], "$add sızmaz")
+        XCTAssertEqual(evs[0].unset, [], "$unset sızmaz")
+        XCTAssertFalse(evs[0].keys.contains("$set"))
+        await c.shutdown()
+    }
+
     func testResetOturumuDaSifirlar() async {
         let net = Net()
         let clock = WallClock(ms: 1_777_000_000_000)
