@@ -101,7 +101,8 @@ struct DeviceIdStore: Sendable {
             // Önce id yazılır; arada kesilirse bir sonraki açılış yine uyuşmazlık görüp yenisini üretir.
             let fresh = uuid()
             guard persist(id: fresh) else { return nil }
-            _ = persist(hash: current)
+            // Hash yazılamazsa kimlik döndürülmez: kalıcı yazma hatasında her açılış uyuşmazlık görüp yeni id üretirdi.
+            guard persist(hash: current) else { return nil }
             return fresh
         }
     }
@@ -121,7 +122,10 @@ struct DeviceIdStore: Sendable {
             let s = String(decoding: data, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
             return s.isEmpty ? .absent : .value(s)
         } catch {
-            return Self.isPermissionDenied(error) ? .locked : .absent
+            // Fail-closed: yalnız "dosya yok" .absent'tır. Gerçek kilit hata kodu cihazda doğrulanmadığı
+            // için bilinmeyen her hatada güvenli yön kimliği korumaktır (nil döner, hiçbir şey yazılmaz);
+            // aksi halde beklenmedik bir kod prewarm tuzağını sessizce açıp mevcut kimliği ezerdi.
+            return Self.isNoSuchFile(error) ? .absent : .locked
         }
     }
 
@@ -147,12 +151,12 @@ struct DeviceIdStore: Sendable {
         }
     }
 
-    /// `NSFileReadNoPermissionError` ya da `EPERM`; Foundation bazen POSIX hatasını alt hata olarak sarar.
-    static func isPermissionDenied(_ error: Error) -> Bool {
+    /// "Dosya yok" (Cocoa 260/4 ya da POSIX ENOENT); Foundation POSIX hatasını alt hata olarak sarabilir.
+    static func isNoSuchFile(_ error: Error) -> Bool {
         let ns = error as NSError
-        if ns.domain == NSCocoaErrorDomain && ns.code == NSFileReadNoPermissionError { return true }
-        if ns.domain == NSPOSIXErrorDomain && ns.code == Int(EPERM) { return true }
-        if let underlying = ns.userInfo[NSUnderlyingErrorKey] as? Error { return isPermissionDenied(underlying) }
+        if ns.domain == NSCocoaErrorDomain && (ns.code == NSFileReadNoSuchFileError || ns.code == NSFileNoSuchFileError) { return true }
+        if ns.domain == NSPOSIXErrorDomain && ns.code == Int(ENOENT) { return true }
+        if let underlying = ns.userInfo[NSUnderlyingErrorKey] as? Error { return isNoSuchFile(underlying) }
         return false
     }
 }

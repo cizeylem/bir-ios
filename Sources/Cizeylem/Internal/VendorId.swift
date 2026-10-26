@@ -16,19 +16,20 @@ enum VendorId {
     @MainActor
     static func currentHash() -> String? {
         #if canImport(UIKit) && !os(watchOS)
-        return UIDevice.current.identifierForVendor.map { hash(of: $0.uuidString) }
+        return UIDevice.current.identifierForVendor.flatMap { hash(of: $0.uuidString) }
         #else
         // macOS'ta IDFV kavramı yok: yedek tespiti bu platformda devre dışı, kimlik korunur.
         return nil
         #endif
     }
 
-    /// Ham IDFV'yi diske de yazmamak için SHA-256 özeti (küçük harf hex).
-    static func hash(of value: String) -> String {
+    /// Ham IDFV'yi diske de yazmamak için SHA-256 özeti (küçük harf hex). CryptoKit yoksa `nil`:
+    /// ham değeri dönmek "ham IDFV hiçbir yere yazılmaz" kuralını bozardı; `nil` yedek kontrolünü atlatır.
+    static func hash(of value: String) -> String? {
         #if canImport(CryptoKit)
         return SHA256.hash(data: Data(value.utf8)).map { String(format: "%02x", $0) }.joined()
         #else
-        return value
+        return nil
         #endif
     }
 }

@@ -128,6 +128,60 @@ final class DeviceIdStoreTests: XCTestCase {
         XCTAssertEqual(store("tvos", vendor: "h2", uuid: "ID-2").getOrCreate(), "ID-2")
     }
 
+    func testBilinmeyenOkumaHatasiKorumaKapaliGibiDavranir() {
+        // Gerçek kilit hata kodu cihazda doğrulanmadı: "dosya yok" dışındaki her hata fail-closed olmalı.
+        let errors: [NSError] = [
+            NSError(domain: NSPOSIXErrorDomain, code: Int(EACCES)),
+            NSError(domain: NSPOSIXErrorDomain, code: Int(EIO)),
+            NSError(domain: NSCocoaErrorDomain, code: NSFileReadUnknownError),
+            NSError(domain: "baska.alan", code: 42),
+        ]
+        for e in errors {
+            _ = store().getOrCreate()
+            XCTAssertNil(store(uuid: "ID-2", readFile: { _ in throw e }).getOrCreate(), "\(e)")
+            XCTAssertEqual(text(idFile), "ID-1", "\(e): mevcut kimlik ezilmemeli")
+            XCTAssertEqual(text(hashFile), "h1", "\(e)")
+            try? FileManager.default.removeItem(at: dir)
+            XCTAssertNil(store(readFile: { _ in throw e }).getOrCreate())
+            XCTAssertFalse(FileManager.default.fileExists(atPath: dir.path), "\(e): hiçbir şey yazılmamalı")
+        }
+    }
+
+    func testDosyaYokHatalariAbsentSayilir() {
+        let errors: [NSError] = [
+            NSError(domain: NSCocoaErrorDomain, code: NSFileReadNoSuchFileError),
+            NSError(domain: NSCocoaErrorDomain, code: NSFileNoSuchFileError),
+            NSError(domain: NSPOSIXErrorDomain, code: Int(ENOENT)),
+            NSError(domain: NSCocoaErrorDomain, code: NSFileReadUnknownError,
+                    userInfo: [NSUnderlyingErrorKey: NSError(domain: NSPOSIXErrorDomain, code: Int(ENOENT))]),
+        ]
+        for e in errors {
+            try? FileManager.default.removeItem(at: dir)
+            XCTAssertEqual(store(readFile: { _ in throw e }).getOrCreate(), "ID-1", "\(e)")
+        }
+    }
+
+    func testHashYazilamazsaUyusmazlikdaKimlikDondurulmez() throws {
+        _ = store(vendor: "h1", uuid: "ID-1").getOrCreate()
+        // Okuma kayıtlı "h1"i görür, ama hash dosyasının yerinde dizin var: yazım kalıcı olarak başarısız.
+        try FileManager.default.removeItem(at: hashFile)
+        try FileManager.default.createDirectory(at: hashFile, withIntermediateDirectories: false)
+        let hashFileURL = hashFile
+        let reader: @Sendable (URL) throws -> Data = { url in
+            url == hashFileURL ? Data("h1".utf8) : try Data(contentsOf: url)
+        }
+        XCTAssertNil(store(vendor: "h2", uuid: "ID-2", readFile: reader).getOrCreate())
+    }
+
+    func testTvOSReadVeKorumasizYoldaHicbirSeyYazilmaz() {
+        let s = store("tvos")
+        XCTAssertNil(s.read())
+        let d = UserDefaults(suiteName: suite)
+        XCTAssertNil(d?.string(forKey: "cz_device_id"))
+        XCTAssertNil(d?.string(forKey: "cz_vendor_hash"))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: dir.path))
+    }
+
     func testSHA256OzetiBilinenDegeriVerir() {
         XCTAssertEqual(VendorId.hash(of: "abc"),
                        "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad")
