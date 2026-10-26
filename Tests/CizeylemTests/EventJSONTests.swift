@@ -121,11 +121,67 @@ final class EventJSONTests: XCTestCase {
         XCTAssertEqual(o["event"] as? String, "cz_app_opened", "event düşmemeli")
     }
 
-    func testDesteklenmeyenTipNullOlurEventDusmez() throws {
-        let o = try decode(event(props: ["d": Date(), "s": "ok"]))
+    private struct Ozel: CustomStringConvertible { var description: String { "ozel-tip" } }
+
+    func testDateEpochMsTamsayiOlur() throws {
+        let o = try decode(event(props: ["d": Date(timeIntervalSince1970: 1_760_000_000.123), "z": Date(timeIntervalSince1970: 0)]))
         let props = try XCTUnwrap(o["props"] as? [String: Any])
-        XCTAssertTrue(props["d"] is NSNull)
+        XCTAssertEqual((props["d"] as? NSNumber)?.int64Value, 1_760_000_000_123)
+        XCTAssertEqual(props["d"] as? Int64, 1_760_000_000_123, "tamsayı olmalı, string ya da kesirli değil")
+        XCTAssertEqual(props["z"] as? Int, 0)
+    }
+
+    func testDateKesirliMsYuvarlanir() throws {
+        // 1000.7 ms: yuvarlama 1001, kırpma 1000 verirdi.
+        let o = try decode(event(props: ["d": Date(timeIntervalSince1970: 1.0007)]))
+        XCTAssertEqual((o["props"] as? [String: Any])?["d"] as? Int, 1001)
+    }
+
+    func testDateSonsuzsaNullOlur() throws {
+        let o = try decode(event(props: ["d": Date(timeIntervalSince1970: .infinity)]))
+        XCTAssertTrue((o["props"] as? [String: Any])?["d"] is NSNull)
+    }
+
+    func testURLAbsoluteStringOlur() throws {
+        let url = try XCTUnwrap(URL(string: "https://example.com/a?b=c#d"))
+        let o = try decode(event(props: ["u": url]))
+        XCTAssertEqual((o["props"] as? [String: Any])?["u"] as? String, "https://example.com/a?b=c#d")
+    }
+
+    func testBilinmeyenTiplerStringDescribingOlurEventDusmez() throws {
+        let o = try decode(event(props: [
+            "ozel": Ozel(), "ch": Character("x"), "sub": "abc".dropFirst(), "data": Data([1, 2, 3]), "s": "ok",
+        ]))
+        let props = try XCTUnwrap(o["props"] as? [String: Any])
+        XCTAssertEqual(props["ozel"] as? String, "ozel-tip")
+        XCTAssertEqual(props["ch"] as? String, "x")
+        XCTAssertEqual(props["sub"] as? String, "bc")
+        XCTAssertEqual(props["data"] as? String, String(describing: Data([1, 2, 3])))
         XCTAssertEqual(props["s"] as? String, "ok")
+        XCTAssertEqual(o["event"] as? String, "cz_app_opened")
+    }
+
+    func testIcIceKoleksiyonlardaDaYeniTipler() throws {
+        let url = try XCTUnwrap(URL(string: "https://x.test"))
+        let o = try decode(event(props: ["m": ["u": url, "o": Ozel()] as [String: Any], "a": [Date(timeIntervalSince1970: 1), Ozel()] as [Any]]))
+        let props = try XCTUnwrap(o["props"] as? [String: Any])
+        XCTAssertEqual((props["m"] as? [String: Any])?["u"] as? String, "https://x.test")
+        XCTAssertEqual((props["m"] as? [String: Any])?["o"] as? String, "ozel-tip")
+        let a = try XCTUnwrap(props["a"] as? [Any])
+        XCTAssertEqual(a[0] as? Int, 1000)
+        XCTAssertEqual(a[1] as? String, "ozel-tip")
+    }
+
+    func testOptionalNoneNilStringineDonmezNullOlur() throws {
+        let none: Ozel? = nil
+        let some: Ozel? = Ozel()
+        let noneDate: Date? = nil
+        let o = try decode(event(props: ["n": none as Any, "s": some as Any, "d": noneDate as Any, "null": NSNull()]))
+        let props = try XCTUnwrap(o["props"] as? [String: Any])
+        XCTAssertTrue(props["n"] is NSNull, "\(String(describing: props["n"]))")
+        XCTAssertEqual(props["s"] as? String, "ozel-tip", "Optional(...) metni sızmamalı")
+        XCTAssertTrue(props["d"] is NSNull)
+        XCTAssertTrue(props["null"] is NSNull)
     }
 
     func testSarilmisOptionalDegerlerAcilir() throws {

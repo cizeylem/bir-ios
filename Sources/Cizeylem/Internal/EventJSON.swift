@@ -98,10 +98,16 @@ enum EventJSON {
         return out
     }
 
-    /// `Any` içine sarılmış `Optional` (örn. `Int?` bir `[String: Any]` değeri olarak gelirse) dinamik
-    /// cast'lerde otomatik açılır; `.none` hiçbir dala uymayıp `default`'a düşer ve `null` olur.
     private static func sanitize(_ value: Any) -> Any {
+        // Optional açık açılır: bilinmeyen tipler `String(describing:)` ile yazıldığından açılmayan
+        // `.none` "nil" metnine, `.some(x)` "Optional(x)" metnine dönerdi (sessiz veri bozulması).
+        if Mirror(reflecting: value).displayStyle == .optional {
+            guard let wrapped = Mirror(reflecting: value).children.first?.value else { return NSNull() }
+            return sanitize(wrapped)
+        }
         switch value {
+        case is NSNull:
+            return NSNull()
         case let s as String:
             return s
         case let n as NSNumber:
@@ -112,9 +118,16 @@ enum EventJSON {
             return sanitizeMap(d)
         case let a as [Any?]:
             return a.map { sanitize($0 as Any) }
+        case let d as Date:
+            // Protokoldeki `time` ile aynı birim (epoch ms).
+            let ms = (d.timeIntervalSince1970 * 1000).rounded()
+            return ms.isFinite ? Int64(ms) : NSNull()
+        case let u as URL:
+            return u.absoluteString
         default:
-            // `NSNull`, nil, Date, URL, özel tipler: JSONSerialization fırlatırdı ve event düşerdi; yalnız değer `null` olur.
-            return NSNull()
+            // Android bilinmeyen tipte `toString()` yazar; `null` görünmez veri kaybı olurdu.
+            // Fırlatmak da event'i düşürürdü.
+            return String(describing: value)
         }
     }
 }
