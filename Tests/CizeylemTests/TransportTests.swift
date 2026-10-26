@@ -61,7 +61,13 @@ final class StubProtocol: URLProtocol {
             await Registry.shared.record(seen)
             done.signal()
         }
-        done.wait()
+        // Süreli bekleme: `startLoading` bugün URLSession'ın kendi iş parçacığında koşuyor, ama ileride
+        // eşzamanlılık havuzuna taşınırsa süresiz bekleme CI'yı sessizce ASARDI. Zaman aşımı bunu
+        // gürültülü bir başarısızlığa çevirir; asılı bir koşu hata veren bir koşudan çok daha kötüdür.
+        if done.wait(timeout: .now() + 10) == .timedOut {
+            client?.urlProtocol(self, didFailWithError: URLError(.timedOut))
+            return
+        }
 
         switch Stub.decode(seen.headers["X-Stub"]) {
         case .status(let code, let headers):
