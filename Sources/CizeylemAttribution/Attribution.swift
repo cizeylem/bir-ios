@@ -94,7 +94,7 @@ public enum Attribution {
     /// Sıfır reklam kimliği "izin yok"un sesidir (ATT kapalıyken sistem verir); kimlik değildir.
     private static func usable(_ idfa: String?) -> String? {
         guard let idfa else { return nil }
-        let t = idfa.trimmingCharacters(in: .whitespaces)
+        let t = idfa.trimmingCharacters(in: .whitespacesAndNewlines)
         let digits = t.replacingOccurrences(of: "-", with: "")
         guard !digits.isEmpty, digits.contains(where: { $0 != "0" }) else { return nil }
         return t

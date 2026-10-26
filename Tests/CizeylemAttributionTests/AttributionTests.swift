@@ -94,7 +94,7 @@ final class AttributionTests: XCTestCase {
     }
 
     func testSifirIDFAGonderilmez() async {
-        for zero in ["00000000-0000-0000-0000-000000000000", "00000000000000000000000000000000", "", "  "] {
+        for zero in ["00000000-0000-0000-0000-000000000000", "00000000000000000000000000000000", "", "  ", "\n", " \n\t "] {
             let r = await run(Consent(analytics: true, attribution: true, adSharing: true), Probe(idfa: zero))
             XCTAssertNil(r.identified.first?["idfa"], "'\(zero)'")
         }
@@ -157,7 +157,8 @@ final class AttributionTests: XCTestCase {
             let r = await run(consent, p)
             let sent = (r.identified + r.anonymous)
             XCTAssertEqual(sent.count, 1, "\(consent)")
-            let wantStatus = consent.analytics && consent.attribution && consent.adSharing
+            // Sabit beklenti: yalnız üçü açıkken açılır. `Consent` mantığının kopyası DEĞİL.
+            let wantStatus = [Consent(analytics: true, attribution: true, adSharing: true)].contains(consent)
             let wantIdfa = wantStatus
             XCTAssertEqual((sent.first ?? [:])["att_status"] != nil, wantStatus, "att_status \(consent)")
             XCTAssertEqual((sent.first ?? [:])["idfa"] != nil, wantIdfa, "idfa \(consent)")

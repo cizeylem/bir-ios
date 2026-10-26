@@ -695,7 +695,9 @@ actor Core {
                 return
             }
             path = "/v1/attribution"
-            body = AttributionBody.identified(raw, deviceId: id)
+            body = AttributionBody.identified(
+                raw, deviceId: id,
+                allowIdfa: consent.allowsIdfa(on: .identified), allowAttStatus: consent.allowsAttStatus)
         }
         guard !body.isEmpty else {
             warn("attribution gövdesi oluşturulamadı; gönderilmedi")

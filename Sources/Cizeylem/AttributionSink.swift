@@ -28,23 +28,47 @@ enum AttributionBody {
     static let identityKeys: Set<String> = ["idfa", "device_id", "user_id", "distinct_id"]
 
     static func anonymous(_ fields: [String: Any]) -> String {
-        encode(strip(fields))
+        encode(remove(identityKeys, from: fields))
     }
 
     /// Kimlikli gövde: `device_id` her zaman çekirdeğin verdiği değerdir (çağıranınki ezilir).
-    static func identified(_ fields: [String: Any], deviceId: String) -> String {
-        var o = fields
+    /// `idfa`/`att_status` yalnız çekirdeğin KENDİ rızası izin veriyorsa kalır: çağıranın elindeki
+    /// rıza kopyası eski olabilir (rıza geri alınmış), kimlikli uçta da tek katmana güvenilmez.
+    static func identified(
+        _ fields: [String: Any], deviceId: String, allowIdfa: Bool = false, allowAttStatus: Bool = false
+    ) -> String {
+        var drop: Set<String> = []
+        if !allowIdfa { drop.insert("idfa") }
+        if !allowAttStatus { drop.insert("attstatus") }
+        var o = remove(drop, from: fields)
         o["device_id"] = deviceId
         return encode(o)
     }
 
-    /// Büyük/küçük harf ve iç içe nesne fark etmez: sözleşme anahtarın yerini değil varlığını yasaklar.
-    private static func strip(_ value: [String: Any]) -> [String: Any] {
+    /// Anahtar karşılaştırması yazım varyantlarına dayanır (`deviceId`, `device-id`, `Device Id`):
+    /// son kapı çağıranın hatasına karşıdır, tam eşleşme bunu yapmaz.
+    static func normalize(_ key: String) -> String {
+        String(key.lowercased().filter { $0 != "_" && $0 != "-" && !$0.isWhitespace })
+    }
+
+    private static let normalizedIdentityKeys: Set<String> = Set(identityKeys.map(normalize))
+
+    private static func remove(_ keys: Set<String>, from value: [String: Any]) -> [String: Any] {
+        let normalized = keys == identityKeys ? normalizedIdentityKeys : Set(keys.map(normalize))
+        return strip(value, normalized)
+    }
+
+    /// Sözlük ve dizi içinde, istenen derinlikte özyineler: sözleşme anahtarın yerini değil varlığını yasaklar.
+    private static func strip(_ value: [String: Any], _ keys: Set<String>) -> [String: Any] {
         var out: [String: Any] = [:]
-        for (k, v) in value where !identityKeys.contains(k.lowercased()) {
-            if let nested = v as? [String: Any] { out[k] = strip(nested) } else { out[k] = v }
-        }
+        for (k, v) in value where !keys.contains(normalize(k)) { out[k] = clean(v, keys) }
         return out
+    }
+
+    private static func clean(_ v: Any, _ keys: Set<String>) -> Any {
+        if let d = v as? [String: Any] { return strip(d, keys) }
+        if let a = v as? [Any] { return a.map { clean($0, keys) } }
+        return v
     }
 
     /// Geçersiz JSON boş döner; çağıran göndermez (yarım gövde sunucuyu zehirlemesin).

@@ -58,8 +58,50 @@ final class AttributionBodyTests: XCTestCase {
         XCTAssertEqual(nested?["ok"] as? Int, 1)
     }
 
+    func testAnonSuzmeDiziIcindekiSozluklereDeInler() {
+        let body = AttributionBody.anonymous([
+            "tok": "t",
+            "a": [["idfa": "A", "ok": 1]] as [Any],
+            "b": [[["device_id": "B"]]] as [Any],
+            "c": [[["x": [["user_id": "U"]] as [Any]]]] as [Any],
+            "d": ["düz", 1, ["distinct_id": "D"]] as [Any],
+        ])
+        XCTAssertFalse(body.contains("idfa"))
+        XCTAssertFalse(body.contains("device_id"))
+        XCTAssertFalse(body.contains("user_id"))
+        XCTAssertFalse(body.contains("distinct_id"))
+        let o = object(body)
+        XCTAssertEqual(((o["a"] as? [[String: Any]])?.first)?["ok"] as? Int, 1)
+        XCTAssertEqual((o["d"] as? [Any])?.first as? String, "düz")
+    }
+
+    func testAnonSuzmeYazimVaryantlariniDaAtar() {
+        let keys = ["deviceId", "device-id", "DEVICE_ID", "Device Id", " device_id ", "userId", "user-id",
+                    "distinctId", "distinct id", "IDFA", "i_d_f_a", "id-fa"]
+        for key in keys {
+            let o = object(AttributionBody.anonymous([key: "x", "adservices_token": "t"]))
+            XCTAssertEqual(Set(o.keys), ["adservices_token"], "'\(key)'")
+        }
+        // Kimlikle ilgisiz benzer anahtarlar kalır.
+        XCTAssertEqual(Set(object(AttributionBody.anonymous(["device_model": "x", "identifier": "y"])).keys),
+                       ["device_model", "identifier"])
+    }
+
+    func testKimlikliGovdedeIdfaVeAttStatusYalnizCekirdekIzinVerirse() {
+        let f: [String: Any] = ["idfa": "A", "att_status": "authorized", "adservices_token": "t",
+                                "n": [["IDFA": "B"]] as [Any]]
+        let none = object(AttributionBody.identified(f, deviceId: "d"))
+        XCTAssertNil(none["idfa"]); XCTAssertNil(none["att_status"])
+        XCTAssertFalse(AttributionBody.identified(f, deviceId: "d").contains("\"B\""))
+        XCTAssertEqual(none["adservices_token"] as? String, "t")
+        let idfaOnly = object(AttributionBody.identified(f, deviceId: "d", allowIdfa: true))
+        XCTAssertEqual(idfaOnly["idfa"] as? String, "A"); XCTAssertNil(idfaOnly["att_status"])
+        let statusOnly = object(AttributionBody.identified(f, deviceId: "d", allowAttStatus: true))
+        XCTAssertNil(statusOnly["idfa"]); XCTAssertEqual(statusOnly["att_status"] as? String, "authorized")
+    }
+
     func testKimlikliGovdeDeviceIdTasir() {
-        let body = AttributionBody.identified(["adservices_token": "t", "idfa": "A"], deviceId: "dev-1")
+        let body = AttributionBody.identified(["adservices_token": "t", "idfa": "A"], deviceId: "dev-1", allowIdfa: true)
         let o = object(body)
         XCTAssertEqual(o["device_id"] as? String, "dev-1")
         XCTAssertEqual(o["idfa"] as? String, "A")
@@ -153,6 +195,33 @@ final class CoreAttributionTests: XCTestCase {
             let calls = await sender.all()
             XCTAssertTrue(calls.isEmpty, "\(consent)")
         }
+    }
+
+    /// I2: çağıranın elindeki rıza kopyası eski olabilir; çekirdek kendi rızasına bakar.
+    func testKimlikliUcCekirdekAdSharingKapaliysaIdfaVeAttStatusuAtar() async {
+        let sender = RecordingSender()
+        let core = make(sender)
+        await core.start()
+        await core.setConsent(Consent(analytics: true, attribution: true, adSharing: false))
+        await core.sendAttribution(.identified, [
+            "adservices_token": .string("t"), "idfa": .string("AAAA"), "att_status": .string("authorized")])
+        let o = object((await sender.all()).first?.body ?? "")
+        XCTAssertNil(o["idfa"])
+        XCTAssertNil(o["att_status"])
+        XCTAssertEqual(o["adservices_token"] as? String, "t")
+        XCTAssertNotNil(o["device_id"])
+    }
+
+    func testKimlikliUcCekirdekUcRizaAciksaIdfaVeAttStatusGecer() async {
+        let sender = RecordingSender()
+        let core = make(sender)
+        await core.start()
+        await core.setConsent(Consent(analytics: true, attribution: true, adSharing: true))
+        await core.sendAttribution(.identified, [
+            "idfa": .string("AAAA"), "att_status": .string("authorized")])
+        let o = object((await sender.all()).first?.body ?? "")
+        XCTAssertEqual(o["idfa"] as? String, "AAAA")
+        XCTAssertEqual(o["att_status"] as? String, "authorized")
     }
 
     func testRizasizAnonUcaTokenGider() async {
