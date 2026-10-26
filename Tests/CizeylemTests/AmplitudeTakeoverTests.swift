@@ -143,13 +143,41 @@ final class AmplitudeTakeoverTests: XCTestCase {
         XCTAssertEqual(find()?.optOut, false)
     }
 
-    func testOptOutYoksaFalseVeSwiftKaynagindaDaFalse() throws {
+    func testOptOutYoksaFalse() throws {
         try makeDB(deviceId: "sql-id")
         XCTAssertEqual(find()?.optOut, false)
         putSwiftDeviceId("swift-id")
-        try FileManager.default.removeItem(at: library.appendingPathComponent("com.amplitude.database"))
+        XCTAssertEqual(find()?.optOut, false, "SQLite kaydı hiç yokken Swift kaynağı false")
+    }
+
+    /// Kullanıcı eski ObjC SDK'sında çıkış yapmış, sonra Swift'e geçilmiş: çıkış bilgisi kimlik
+    /// zincirinden bağımsız taşınmalı.
+    func testOptOutKimlikKaynagindanBagimsizOkunur() throws {
         try makeDB(deviceId: "sql-id", optOut: 1)
-        // Swift SDK opt_out'u hiç okumaz; Swift kaynağından devralırken varsayım false.
+        putSwiftDeviceId("swift-id")
+        let swift = find()
+        XCTAssertEqual(swift?.source, "amplitude-swift")
+        XCTAssertEqual(swift?.optOut, true)
+        let configured = find(configured: "benim-id")
+        XCTAssertEqual(configured?.source, "configured")
+        XCTAssertEqual(configured?.optOut, true)
+    }
+
+    func testOptOutSQLitedeKimlikGecersizkenDeSwiftKimligiyleTasinir() throws {
+        try makeDB(deviceId: "020000000000", optOut: 1)
+        putSwiftDeviceId("swift-id")
+        XCTAssertEqual(find()?.optOut, true)
+    }
+
+    func testOptOutSQLitedeKimlikSatiriYokkenDeTasinir() throws {
+        try makeDB(deviceId: nil, optOut: 1)
+        putSwiftDeviceId("swift-id")
+        XCTAssertEqual(find()?.optOut, true)
+    }
+
+    func testOptOutBozukVeritabaniFalseVerir() throws {
+        try Data("not a database".utf8).write(to: library.appendingPathComponent("com.amplitude.database"))
+        putSwiftDeviceId("swift-id")
         XCTAssertEqual(find()?.optOut, false)
     }
 

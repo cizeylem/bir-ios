@@ -45,18 +45,23 @@ enum AmplitudeTakeover {
         ownStore: DeviceIdStore, libraryDirectory: URL
     ) -> Takeover? {
         // Açık değer geliştiricinin bilinçli seçimi: yalnız boşluk/boş ise yok sayılır, liste uygulanmaz.
-        if let configured, !configured.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            return Takeover(deviceId: configured, source: "configured", optOut: false)
-        }
-        if ownStore.read() != nil { return nil }
+        let explicit = configured.flatMap { $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : $0 }
+        if explicit == nil, ownStore.read() != nil { return nil }
 
+        // optOut kimlik zincirinden BAĞIMSIZ okunur: kullanıcı eski ObjC SDK'sında çıkış yapıp sonra
+        // Swift'e geçmiş olabilir; kimliği hangi kaynak verirse versin bu irade kaybolmamalı.
+        // Swift SDK optOut'u kalıcı tutmadığı için tek kaynak ObjC SQLite `long_store`'dur.
+        let legacy = LegacyDatabase.read(directory: libraryDirectory, instance: instance)
+        let optOut = legacy?.optOut ?? false
+
+        if let explicit {
+            return Takeover(deviceId: explicit, source: "configured", optOut: optOut)
+        }
         if let id = swiftSuiteDeviceId(apiKey: apiKey, instance: instance), isValid(id) {
-            // Swift SDK optOut'u kalıcı tutmaz; oradan devralırken false varsayılır.
-            return Takeover(deviceId: id, source: "amplitude-swift", optOut: false)
+            return Takeover(deviceId: id, source: "amplitude-swift", optOut: optOut)
         }
-
-        if let legacy = LegacyDatabase.read(directory: libraryDirectory, instance: instance), isValid(legacy.deviceId) {
-            return Takeover(deviceId: legacy.deviceId, source: "amplitude-sqlite", optOut: legacy.optOut)
+        if let id = legacy?.deviceId, isValid(id) {
+            return Takeover(deviceId: id, source: "amplitude-sqlite", optOut: optOut)
         }
         return nil
     }
@@ -106,7 +111,7 @@ enum AmplitudeTakeover {
 /// atlanır. Testle kilitli: bozuk DB baytları ve dizin listesi değişmez. Android'deki "READONLY
 /// bayrağına rağmen bozuk DB silindi" sınıfı hata burada yok, çünkü SQLite böyle bir geri çağrı sunmaz.
 private enum LegacyDatabase {
-    struct Record { let deviceId: String; let optOut: Bool }
+    struct Record { let deviceId: String?; let optOut: Bool }
 
     static func read(directory: URL, instance: String) -> Record? {
         let path = directory.appendingPathComponent(AmplitudeTakeover.legacyDatabaseName(instance: instance)).path
@@ -123,7 +128,7 @@ private enum LegacyDatabase {
         // Amplitude aynı süreçte yazıyor olabilir; kısa bekleyip vazgeç.
         sqlite3_busy_timeout(db, 200)
 
-        guard let deviceId = text(db, "SELECT value FROM store WHERE key = 'device_id'") else { return nil }
+        let deviceId = text(db, "SELECT value FROM store WHERE key = 'device_id'")
         let optOut = integer(db, "SELECT value FROM long_store WHERE key = 'opt_out'") == 1
         return Record(deviceId: deviceId, optOut: optOut)
     }
