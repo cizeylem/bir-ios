@@ -10,7 +10,12 @@ let package = Package(
     ],
     dependencies: [],
     targets: [
-        .target(name: "Cizeylem"),
+        .target(
+            name: "Cizeylem",
+            // Privacy Manifest hedef kaynağı olarak bildirilir (SPEC §7). `.copy`: dosya
+            // olduğu gibi pakete girer, Xcode onu işleyip bozmaz.
+            resources: [.copy("Resources/PrivacyInfo.xcprivacy")]
+        ),
         .target(name: "CizeylemAttribution", dependencies: ["Cizeylem"]),
         .testTarget(name: "CizeylemTests", dependencies: ["Cizeylem"]),
         .testTarget(name: "CizeylemAttributionTests", dependencies: ["CizeylemAttribution"]),
