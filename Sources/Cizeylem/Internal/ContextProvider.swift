@@ -74,7 +74,7 @@ enum InstallSource {
 /// Son bilinen ağ durumu. İzleyici bir kez kurulur; `current` ağ sorgusu yapmaz, beklemez.
 ///
 /// Durum `NWPathMonitor.currentPath`'te durur (iş parçacığı güvenli). İlk güncelleme gelene kadar
-/// durum bilinmez ve `other` döner: bilmemek ile çevrimdışı olmak aynı şey değildir. "İlk güncelleme
+/// durum bilinmez ve `nil` döner (alan yazılmaz): bilmemek ne çevrimdışı olmaktır ne de `other`; `other` yalnız bilinen ama wifi/cellular/ethernet olmayan taşıma içindir. "İlk güncelleme
 /// geldi" bilgisi bir `DispatchGroup`'ta tutulur (tek seferlik mandalı bir semafor sağlar);
 /// paylaşılan değişken ve kilit yok.
 final class NetworkMonitor: Sendable {
@@ -103,8 +103,8 @@ final class NetworkMonitor: Sendable {
 
     var isKnown: Bool { known.wait(timeout: .now()) == .success }
 
-    var current: String {
-        guard isKnown else { return "other" }
+    var current: String? {
+        guard isKnown else { return nil }
         let path = monitor.currentPath
         return Self.classify(
             satisfied: path.status == .satisfied,
@@ -135,12 +135,12 @@ struct ContextProvider: Sendable {
     private let app: AppInfo
     private let installSource: String?
     private let deviceModel: String
-    private let network: @Sendable () -> String
+    private let network: @Sendable () -> String?
 
     init(
         libVersion: String, platform: Platform, device: DeviceSnapshot, app: AppInfo,
         installSource: String?, deviceModel: String = DeviceModel.identifier,
-        network: @escaping @Sendable () -> String
+        network: @escaping @Sendable () -> String?
     ) {
         self.libVersion = libVersion
         self.platform = platform.name
@@ -173,9 +173,9 @@ struct ContextProvider: Sendable {
             "device_manufacturer": "Apple",
             "locale": Self.locale,
             "timezone": TimeZone.autoupdatingCurrent.identifier,
-            "network_type": network(),
             "app_state": appState,
         ]
+        if let n = network() { m["network_type"] = n }
         if let v = app.version { m["app_version"] = v }
         if let b = app.build { m["app_build"] = b }
         if let s = installSource { m["install_source"] = s }

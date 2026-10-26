@@ -16,7 +16,7 @@ final class ContextProviderTests: XCTestCase {
         device: DeviceSnapshot? = nil,
         app: AppInfo? = nil,
         install: String? = "app_store",
-        network: @escaping @Sendable () -> String = { "wifi" }
+        network: @escaping @Sendable () -> String? = { "wifi" }
     ) -> ContextProvider {
         ContextProvider(
             libVersion: "1.2.3", platform: platform(name),
@@ -140,11 +140,17 @@ final class ContextProviderTests: XCTestCase {
         }
     }
 
-    func testBilinmeyenAgDurumuOtherVerirOfflineDegil() {
+    func testBilinmeyenAgDurumundaAlanYazilmaz() {
         let monitor = NetworkMonitor(autostart: false)
         XCTAssertFalse(monitor.isKnown)
-        XCTAssertEqual(monitor.current, "other")
-        XCTAssertNotEqual(monitor.current, "offline")
+        XCTAssertNil(monitor.current)
+        XCTAssertNil(ctx(provider(network: { monitor.current }))["network_type"])
+        XCTAssertNil(ctx(provider(network: { nil }))["network_type"])
+    }
+
+    func testOtherBilinenAmaSiniflanmayanTasimaIcinYazilir() {
+        XCTAssertEqual(ctx(provider(network: { "other" }))["network_type"] as? String, "other")
+        XCTAssertEqual(NetworkMonitor.classify(satisfied: true, wifi: false, cellular: false, wired: false), "other")
     }
 
     func testAgSiniflandirmasi() {
@@ -160,7 +166,7 @@ final class ContextProviderTests: XCTestCase {
         let deadline = Date().addingTimeInterval(5)
         while !monitor.isKnown && Date() < deadline { Thread.sleep(forTimeInterval: 0.05) }
         XCTAssertTrue(monitor.isKnown)
-        XCTAssertTrue(["wifi", "cellular", "ethernet", "offline", "other"].contains(monitor.current))
+        XCTAssertTrue(["wifi", "cellular", "ethernet", "offline", "other"].contains(monitor.current ?? "yok"))
     }
 
     // MARK: install_source
