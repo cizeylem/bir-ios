@@ -37,6 +37,7 @@ actor Dispatcher {
 
     private var disabled = false
     private var rejected = 0
+    private var skippedLines = 0
     /// Takvimin son adımı (sn); 0 = backoff yok.
     private var backoffStep: Double = 0
     private var backoffUntil: Double = 0
@@ -59,6 +60,12 @@ actor Dispatcher {
     func stats() -> Stats {
         Stats(queued: queue.count, dropped: queue.droppedCount, rejected: rejected, disabled: disabled)
     }
+
+    /// Okunamadığı için silinen satır sayısı. `rejected` (sunucunun kararı) ve `dropped` (bizim
+    /// kapasite kararımız) ile karıştırılmaz: bu, kendi yazdığımızı geri okuyamamamızdır.
+    /// Android'deki `skippedCount()` ile aynı kalıp; `Stats` alanları değişmedi. Satır yalnız
+    /// kuyruktan silindiği anda, bir kez sayılır (`retry`'da silinmez, sayılmaz).
+    func skippedCount() -> Int { skippedLines }
 
     /// Kuyruğa satır ekler. Kuyruk actor'a ait olduğu için dışarıdan tek giriş bu.
     func enqueue(_ line: String) {
@@ -96,7 +103,7 @@ actor Dispatcher {
             // Hepsi bozuksa boş gövde göndermek anlamsız, satırları bırakmak ise poison message:
             // gönderim o satırda sonsuza dek tıkanır. Ağa çıkılmadığı için backoff'a dokunulmaz.
             if skipped >= batch.count {
-                rejected += batch.count
+                skippedLines += batch.count
                 queue.removeFirst(batch.count)
                 continue
             }
@@ -124,11 +131,14 @@ actor Dispatcher {
                     size = (batch.count + 1) / 2
                 }
             case .drop:
-                rejected += remaining
+                // Bozuk satır sunucuya hiç gitmedi: reddi sunucunun saymak yanlış olur.
+                let unreadable = min(skipped, remaining)
+                skippedLines += unreadable
+                rejected += remaining - unreadable
                 queue.removeFirst(remaining)
                 resetBackoff()
             case .ok:
-                rejected += min(skipped, remaining)
+                skippedLines += min(skipped, remaining)
                 queue.removeFirst(remaining)
                 resetBackoff()
             }

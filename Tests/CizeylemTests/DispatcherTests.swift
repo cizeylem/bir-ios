@@ -490,7 +490,9 @@ final class DispatcherTests: XCTestCase {
         XCTAssertEqual(n, 0, "boş gövde ağa çıkmaz")
         let s = await d.stats()
         XCTAssertEqual(s.queued, 0, "poison satırlar kuyrukta kalmaz")
-        XCTAssertEqual(s.rejected, 4)
+        XCTAssertEqual(s.rejected, 0, "sunucu reddetmedi")
+        let sk = await d.skippedCount()
+        XCTAssertEqual(sk, 4)
     }
 
     func testBozukSatirGecerlilerleKarisikGidiyorBozukOlanReddedilmisSayilir() async {
@@ -501,7 +503,9 @@ final class DispatcherTests: XCTestCase {
         XCTAssertEqual(calls, [["id-1", "id-2"]])
         let s = await d.stats()
         XCTAssertEqual(s.queued, 0)
-        XCTAssertEqual(s.rejected, 1)
+        XCTAssertEqual(s.rejected, 0)
+        let sk = await d.skippedCount()
+        XCTAssertEqual(sk, 1)
     }
 
     func testBozukSatirRetryDeSilinmezVeSayilmaz() async {
@@ -512,11 +516,15 @@ final class DispatcherTests: XCTestCase {
         var s = await d.stats()
         XCTAssertEqual(s.queued, 2)
         XCTAssertEqual(s.rejected, 0)
+        var sk = await d.skippedCount()
+        XCTAssertEqual(sk, 0, "retry'da silinmedi, sayılmaz")
         clock.advance(1_000)
         await d.drain()
         s = await d.stats()
         XCTAssertEqual(s.queued, 0)
-        XCTAssertEqual(s.rejected, 1)
+        XCTAssertEqual(s.rejected, 0)
+        sk = await d.skippedCount()
+        XCTAssertEqual(sk, 1)
     }
 
     func testHepsiBozukBatchBackoffuSifirlamaz() async {
@@ -544,8 +552,51 @@ final class DispatcherTests: XCTestCase {
         let d = make([line(1), "çöp", line(2)], net: net, clock: Clock())
         await d.drain()
         let s = await d.stats()
-        XCTAssertEqual(s.rejected, 3)
+        XCTAssertEqual(s.rejected, 2, "yalnız sunucuya giden iki geçerli satır")
+        let sk = await d.skippedCount()
+        XCTAssertEqual(sk, 1)
         XCTAssertEqual(s.queued, 0)
+    }
+
+    func testBozukSatirRetryVeSplitTurlarindaSismez() async {
+        // [bozuk, e1, e2]: retry, retry, split, split, ok. Bozuk satır tek kez sayılır.
+        let net = FakeNet { idx, _ in
+            switch idx {
+            case 0, 1: return (.retry, nil)
+            case 2: return (.split, nil)
+            default: return (.ok, nil)
+            }
+        }
+        let clock = Clock()
+        let d = make(["çöp", line(1), line(2)], net: net, clock: clock)
+        await d.drain()
+        clock.advance(1_000)
+        await d.drain()
+        clock.advance(8_000)
+        await d.drain()
+        let sk = await d.skippedCount()
+        XCTAssertEqual(sk, 1)
+        let s = await d.stats()
+        XCTAssertEqual(s.rejected, 0)
+        XCTAssertEqual(s.queued, 0)
+    }
+
+    func testRejectedYalnizDropVeTekEventSplitteArtar() async {
+        // ok, retry, bölünüp ok: rejected 0.
+        let net = FakeNet { idx, _ in idx == 0 ? (.split, nil) : (.ok, nil) }
+        let d = make(lines(4), net: net, clock: Clock())
+        await d.drain()
+        let a = await d.stats()
+        XCTAssertEqual(a.rejected, 0)
+        // drop: artar. tek event split: artar.
+        let net2 = FakeNet { idx, _ in idx == 0 ? (.drop, nil) : (.split, nil) }
+        try? FileManager.default.removeItem(at: dir)
+        let d2 = make(lines(3) + [line(10)], net: net2, clock: Clock(), maxEvents: 5000)
+        await d2.drain()
+        let b = await d2.stats()
+        XCTAssertEqual(b.rejected, 4)
+        let sk = await d2.skippedCount()
+        XCTAssertEqual(sk, 0)
     }
 
     // MARK: - Eşzamanlılık ve kuyruk taşması
