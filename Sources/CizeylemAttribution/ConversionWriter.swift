@@ -15,7 +15,7 @@ import AdAttributionKit
 /// yok) sonuç "hiçbir şey yazma"dır; yedek şema ya da gömülü varsayılan **yoktur**.
 enum ConversionWriter {
     enum Outcome: Sendable, Equatable {
-        case unsupportedPlatform, noConsent, noSchema, noMatchingRule, wrote
+        case unsupportedPlatform, noSchema, noMatchingRule, wrote
     }
 
     /// Dış dünya: şema indirme ve sistem yüzeyi. Üretimde gerçek, testte sayaçlı sahte.
@@ -60,12 +60,16 @@ enum ConversionWriter {
         return (best.fine, best.coarse, best.lockWindow)
     }
 
-    /// Kapı sırası ucuzdan pahalıya: platform, rıza, ağ, şema, kural, yazma. Her kapı kapanınca
+    /// Kapı sırası ucuzdan pahalıya: platform, ağ, şema, kural, yazma. Her kapı kapanınca
     /// sonrası (özellikle ağ) hiç çalışmaz.
-    static func run(schemaURL: URL, consent: Consent, events: [String: Int],
+    ///
+    /// **Rıza kapısı YOK, bilerek.** SPEC §5'in "Rıza yok" satırı SKAN/AAK değer güncellemesine
+    /// açıkça izin veriyor: değer bize değil Apple'ın toplayıcısına gider ve kimlik taşımaz.
+    /// Kontrol noktası host'un açık `enableConversionWriter` çağrısıdır — yazıcı varsayılan
+    /// kapalıdır ve kendiliğinden hiç kurulmaz.
+    static func run(schemaURL: URL, events: [String: Int],
                     environment: Environment) async -> Outcome {
         guard environment.supported else { return .unsupportedPlatform }
-        guard consent.allowsConversionWrite else { return .noConsent }
         // http şema bir ortadaki adamın değer yazdırmasına açıktır.
         guard schemaURL.scheme?.lowercased() == "https",
               let data = await environment.fetch(schemaURL),

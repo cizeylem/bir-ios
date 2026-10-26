@@ -33,14 +33,12 @@ public enum Attribution {
     ///
     /// - `schemaURL`: uzaktaki sürümlü JSON şema (https). Alınamaz ya da geçersizse hiçbir şey
     ///   yazılmaz; yedek şema yoktur.
-    /// - `consent`: o anki rızanın kopyası. Karar 5: `adSharing` kapalıysa yazılmaz (bkz. `Consent.allowsConversionWrite`).
     /// - `events`: şemadaki kurallara göre değerlendirilen event sayaçları.
     /// - tvOS'ta çağrı sessizce hiçbir şey yapmaz (SKAdNetwork/AAK yok).
     public static func enableConversionWriter(
-        schemaURL: URL, consent: Consent, events: [String: Int] = ["first_open": 1]
+        schemaURL: URL, events: [String: Int] = ["first_open": 1]
     ) {
-        _ = enableConversionWriterTask(schemaURL: schemaURL, consent: consent, events: events,
-                                       environment: .live)
+        _ = enableConversionWriterTask(schemaURL: schemaURL, events: events, environment: .live)
     }
 
     /// Testin sonucu bekleyebilmesi için `Task` döndürür; `start` bunu çağırmaz.
@@ -56,12 +54,11 @@ public enum Attribution {
 
     @discardableResult
     static func enableConversionWriterTask(
-        schemaURL: URL, consent: Consent, events: [String: Int],
+        schemaURL: URL, events: [String: Int],
         environment: ConversionWriter.Environment
     ) -> Task<ConversionWriter.Outcome, Never> {
         Task.detached(priority: .utility) {
-            await ConversionWriter.run(schemaURL: schemaURL, consent: consent, events: events,
-                                       environment: environment)
+            await ConversionWriter.run(schemaURL: schemaURL, events: events, environment: environment)
         }
     }
 

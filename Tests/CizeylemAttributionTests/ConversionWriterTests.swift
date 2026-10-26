@@ -60,7 +60,7 @@ final class ConversionWriterTests: XCTestCase {
     func testAcikCagriYaziciyiKurar() async {
         let log = SurfaceLog()
         let task = Attribution.enableConversionWriterTask(
-            schemaURL: url, consent: full, events: ["first_open": 1], environment: env(log, data: goodJSON))
+            schemaURL: url, events: ["first_open": 1], environment: env(log, data: goodJSON))
         let outcome = await task.value
         XCTAssertEqual(outcome, .wrote)
         XCTAssertEqual(log.all, [.init(fine: 5, coarse: "medium", lock: true)])
@@ -84,7 +84,7 @@ final class ConversionWriterTests: XCTestCase {
         for (name, data) in cases {
             let log = SurfaceLog()
             let outcome = await ConversionWriter.run(
-                schemaURL: url, consent: full, events: ["first_open": 1], environment: env(log, data: data))
+                schemaURL: url, events: ["first_open": 1], environment: env(log, data: data))
             XCTAssertEqual(outcome, .noSchema, name)
             XCTAssertTrue(log.all.isEmpty, name)
         }
@@ -93,7 +93,7 @@ final class ConversionWriterTests: XCTestCase {
     func testHttpsOlmayanSemaAdresiIndirilmezBile() async {
         let log = SurfaceLog()
         let outcome = await ConversionWriter.run(
-            schemaURL: URL(string: "http://cdn.example.com/s.json")!, consent: full,
+            schemaURL: URL(string: "http://cdn.example.com/s.json")!,
             events: ["first_open": 1], environment: env(log, data: goodJSON))
         XCTAssertEqual(outcome, .noSchema)
         XCTAssertEqual(log.fetches.count, 0)
@@ -103,7 +103,7 @@ final class ConversionWriterTests: XCTestCase {
     func testKuralEslesmezseYazilmaz() async {
         let log = SurfaceLog()
         let outcome = await ConversionWriter.run(
-            schemaURL: url, consent: full, events: ["baska": 1], environment: env(log, data: goodJSON))
+            schemaURL: url, events: ["baska": 1], environment: env(log, data: goodJSON))
         XCTAssertEqual(outcome, .noMatchingRule)
         XCTAssertTrue(log.all.isEmpty)
     }
@@ -114,7 +114,7 @@ final class ConversionWriterTests: XCTestCase {
         let log = SurfaceLog()
         // `supported` verilmez: platformun kendi kararı sınanır.
         let outcome = await ConversionWriter.run(
-            schemaURL: url, consent: full, events: ["first_open": 1], environment: env(log, data: goodJSON, supported: nil))
+            schemaURL: url, events: ["first_open": 1], environment: env(log, data: goodJSON, supported: nil))
         #if os(iOS)
         XCTAssertTrue(ConversionWriter.platformSupported)
         XCTAssertEqual(outcome, .wrote)
@@ -131,29 +131,26 @@ final class ConversionWriterTests: XCTestCase {
     func testDesteklenmeyenPlatformdaAcikCagriDaSessizdir() async {
         let log = SurfaceLog()
         let task = Attribution.enableConversionWriterTask(
-            schemaURL: url, consent: full, events: ["first_open": 1], environment: env(log, data: goodJSON, supported: false))
+            schemaURL: url, events: ["first_open": 1], environment: env(log, data: goodJSON, supported: false))
         let outcome = await task.value
         XCTAssertEqual(outcome, .unsupportedPlatform)
         XCTAssertEqual(log.fetches.count, 0)
         XCTAssertTrue(log.all.isEmpty)
     }
 
-    // MARK: Karar 5 — rıza kapısı
+    // MARK: Karar 5 — rıza kapısı YOK (SPEC §5)
 
-    func testAdSharingKapaliykenYazmaYok() async {
+    /// SPEC §5'in "Rıza yok" satırı SKAN/AAK değer güncellemesine açıkça izin verir: değer bize
+    /// değil Apple'ın toplayıcısına gider ve kimlik taşımaz. Kontrol noktası host'un açık
+    /// `enableConversionWriter` çağrısıdır; yazıcı varsayılan kapalıdır ve kendiliğinden kurulmaz.
+    func testRizadanBagimsizYazilir() async {
         for a in [false, true] { for b in [false, true] { for c in [false, true] {
             let consent = Consent(analytics: a, attribution: b, adSharing: c)
             let log = SurfaceLog()
             let outcome = await ConversionWriter.run(
-                schemaURL: url, consent: consent, events: ["first_open": 1], environment: env(log, data: goodJSON))
-            if c {
-                XCTAssertEqual(outcome, .wrote, "\(consent)")
-                XCTAssertEqual(log.all.count, 1, "\(consent)")
-            } else {
-                XCTAssertEqual(outcome, .noConsent, "\(consent)")
-                XCTAssertTrue(log.all.isEmpty, "\(consent)")
-                XCTAssertEqual(log.fetches.count, 0, "rızasızken şema bile indirilmez: \(consent)")
-            }
+                schemaURL: url, events: ["first_open": 1], environment: env(log, data: goodJSON))
+            XCTAssertEqual(outcome, .wrote, "\(consent)")
+            XCTAssertEqual(log.all.count, 1, "\(consent)")
         } } }
     }
 

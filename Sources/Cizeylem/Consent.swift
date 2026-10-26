@@ -2,8 +2,7 @@
 ///
 /// Anahtarlar katmanlıdır (SPEC §5): `analytics` kalıcı kimliği ve event'leri açar,
 /// `attribution` yalnız `analytics` ile birlikte `device_id`'li attribution'ı açar,
-/// `adSharing` yalnız reklam kimliği/`att_status` kapısıdır ve kimlikli yolu tek başına açmaz
-/// (tek istisna: kimlik taşımayan SKAN/AAK değer yazımı, `allowsConversionWrite`).
+/// `adSharing` yalnız reklam kimliği/`att_status` kapısıdır ve kimlikli yolu tek başına açmaz.
 public struct Consent: Sendable, Equatable {
     public let analytics: Bool
     public let attribution: Bool
@@ -53,9 +52,4 @@ extension Consent {
         }
     }
 
-    /// SKAN/AAK dönüşüm değeri yazımı: `adSharing` şart, başka anahtar aranmaz. SPEC §5 "Rıza yok"
-    /// satırı bu yazıma rızasız izin veriyor; yine de daha sıkı olan seçildi: yazım geri alınamaz
-    /// ve host'un açık `enableConversionWriter` çağrısıyla başlar, rıza belirsizliği yazmama
-    /// yönünde çözülür. Değer kimlik taşımadığı için `analytics`/`attribution` istenmez.
-    package var allowsConversionWrite: Bool { adSharing }
 }
