@@ -329,9 +329,12 @@ final class AmplitudeTakeoverTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: ownDir.path))
         // Suite anahtarı da yaratılmadı.
         XCTAssertNil(UserDefaults(suiteName: swiftSuite())!.object(forKey: "device_id"))
+        #if os(macOS)
+        // `homeDirectoryForCurrentUser` yalnız macOS SDK'sında var.
         let plist = FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent("Library/Preferences/\(swiftSuite()).plist")
         XCTAssertFalse(FileManager.default.fileExists(atPath: plist.path))
+        #endif
     }
 
     func testGenelAcikGirisNoktasiCalisir() {

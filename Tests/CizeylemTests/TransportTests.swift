@@ -1,13 +1,22 @@
 import XCTest
-import Synchronization
 @testable import Cizeylem
 
-/// Sahte ağ. Durum `Mutex` içinde (kilit kaçışı/`unchecked` yok); `URLProtocol` eşzamanlı
-/// çalıştığı için kayıt ve yanıt aynı çağrıda, beklemeden yapılır.
-enum Stub: Sendable {
+/// Sahte ağ. Yanıt, oturumun `X-Stub` başlığında taşınır (durumsuz); gelen istekler actor'a
+/// kaydedilir. Kayıt ve yanıt arasındaki yarış, `startLoading`'in kaydı bekleyip sonra teslim
+/// etmesiyle kapanır: `send` döndüğünde kayıt kesinlikle tamamdır, yani testler yalancı yeşile
+/// düşemez. `startLoading` URLSession'ın kendi iş parçacığında koşar (eşzamanlılık havuzunda
+/// değil), Task ise havuzda; semafor beklemesi bu yüzden kilitlenmez.
+enum Stub: Sendable, Codable {
     case status(Int, headers: [String: String])
-    case failure(URLError.Code)
+    case failure(Int)
     case redirect(Int, to: String)
+
+    var header: String { (try? JSONEncoder().encode(self).base64EncodedString()) ?? "" }
+    static func decode(_ h: String?) -> Stub {
+        guard let h, let d = Data(base64Encoded: h),
+              let s = try? JSONDecoder().decode(Stub.self, from: d) else { return .status(200, headers: [:]) }
+        return s
+    }
 }
 
 struct Seen: Sendable {
@@ -18,19 +27,14 @@ struct Seen: Sendable {
     let body: Data
 }
 
-struct RegistryState: Sendable {
-    var stub: Stub = .status(200, headers: [:])
-    var seen: [Seen] = []
+actor Registry {
+    static let shared = Registry()
+    private var seen: [Seen] = []
+    func reset() { seen = [] }
+    func record(_ s: Seen) { seen.append(s) }
+    func requests() -> [Seen] { seen }
 }
 
-@available(macOS 15, iOS 18, tvOS 18, *)
-enum Registry {
-    static let state = Mutex(RegistryState())
-    static func reset(_ s: Stub) { state.withLock { $0 = RegistryState(stub: s, seen: []) } }
-    static func requests() -> [Seen] { state.withLock { $0.seen } }
-}
-
-@available(macOS 15, iOS 18, tvOS 18, *)
 final class StubProtocol: URLProtocol {
     override class func canInit(with request: URLRequest) -> Bool { true }
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
@@ -48,21 +52,25 @@ final class StubProtocol: URLProtocol {
             s.close()
         } else if let b = request.httpBody { body = b }
         let url = request.url!
-        let stub = Registry.state.withLock { st -> Stub in
-            st.seen.append(Seen(
-                url: url, method: request.httpMethod,
-                headers: request.allHTTPHeaderFields ?? [:],
-                timeout: request.timeoutInterval, body: body))
-            return st.stub
+        let seen = Seen(
+            url: url, method: request.httpMethod,
+            headers: request.allHTTPHeaderFields ?? [:],
+            timeout: request.timeoutInterval, body: body)
+        let done = DispatchSemaphore(value: 0)
+        Task {
+            await Registry.shared.record(seen)
+            done.signal()
         }
-        switch stub {
+        done.wait()
+
+        switch Stub.decode(seen.headers["X-Stub"]) {
         case .status(let code, let headers):
             let r = HTTPURLResponse(url: url, statusCode: code, httpVersion: "HTTP/1.1", headerFields: headers)!
             client?.urlProtocol(self, didReceive: r, cacheStoragePolicy: .notAllowed)
             client?.urlProtocol(self, didLoad: Data("{\"gövde\":\"x\"}".utf8))
             client?.urlProtocolDidFinishLoading(self)
         case .failure(let code):
-            client?.urlProtocol(self, didFailWithError: URLError(code))
+            client?.urlProtocol(self, didFailWithError: URLError(URLError.Code(rawValue: code)))
         case .redirect(let code, let to):
             let r = HTTPURLResponse(url: url, statusCode: code, httpVersion: "HTTP/1.1",
                                     headerFields: ["Location": to])!
@@ -77,22 +85,25 @@ final class StubProtocol: URLProtocol {
     override func stopLoading() {}
 }
 
-@available(macOS 15, iOS 18, tvOS 18, *)
 final class TransportTests: XCTestCase {
     private let endpoint = URL(string: "https://ingest.example.com")!
     // 2025-01-01T00:00:00Z
     private let now = Date(timeIntervalSince1970: 1_735_689_600)
 
-    private func transport(apiKey: String = "ck_test") -> Transport {
+    private func session(_ stub: Stub) -> URLSession {
         let cfg = URLSessionConfiguration.ephemeral
         cfg.protocolClasses = [StubProtocol.self]
-        return Transport(endpoint: endpoint, apiKey: apiKey, session: URLSession(configuration: cfg),
-                         now: { [now] in now })
+        cfg.httpAdditionalHeaders = ["X-Stub": stub.header]
+        return URLSession(configuration: cfg)
+    }
+
+    private func transport(_ stub: Stub = .status(200, headers: [:]), apiKey: String = "ck_test") -> Transport {
+        Transport(endpoint: endpoint, apiKey: apiKey, session: session(stub), now: { [now] in now })
     }
 
     private func send(_ stub: Stub, body: String = "{\"events\":[]}") async -> (Outcome, retryAfter: Double?) {
-        Registry.reset(stub)
-        return await transport().send(body: body)
+        await Registry.shared.reset()
+        return await transport(stub).send(body: body)
     }
 
     private func st(_ code: Int, _ h: [String: String] = [:]) -> Stub { .status(code, headers: h) }
@@ -204,10 +215,10 @@ final class TransportTests: XCTestCase {
             let r = await send(st(c))
             XCTAssertEqual(r.0, .retry, "\(c)")
         }
-        let n = await send(.failure(.notConnectedToInternet))
+        let n = await send(.failure(URLError.notConnectedToInternet.rawValue))
         XCTAssertEqual(n.0, .retry)
         XCTAssertNil(n.retryAfter)
-        let t = await send(.failure(.timedOut))
+        let t = await send(.failure(URLError.timedOut.rawValue))
         XCTAssertEqual(t.0, .retry)
     }
 
@@ -229,7 +240,7 @@ final class TransportTests: XCTestCase {
     func test302YonlendirmeIzlenmezVeRetryDoner() async {
         let r = await send(.redirect(302, to: "https://evil.example.net/v1/batch"))
         XCTAssertEqual(r.0, .retry)
-        let seen = Registry.requests()
+        let seen = await Registry.shared.requests()
         XCTAssertEqual(seen.count, 1, "yönlendirme hedefine ikinci bir POST atılmamalı")
         XCTAssertEqual(seen.first?.url?.host, "ingest.example.com")
     }
@@ -237,46 +248,44 @@ final class TransportTests: XCTestCase {
     func test307YonlendirmeIzlenmez() async {
         let r = await send(.redirect(307, to: "https://evil.example.net/x"))
         XCTAssertEqual(r.0, .retry)
-        let seen = Registry.requests()
+        let seen = await Registry.shared.requests()
         XCTAssertEqual(seen.count, 1)
     }
 
     func testAuthorizationBasligiBearerApiKey() async {
-        Registry.reset(st(200))
+        await Registry.shared.reset()
         _ = await transport(apiKey: "ck_abc123").send(body: "{}")
-        let seen = Registry.requests()
+        let seen = await Registry.shared.requests()
         XCTAssertEqual(seen.first?.headers["Authorization"], "Bearer ck_abc123")
     }
 
     func testContentEncodingGzipBasligiYazilir() async {
         let r = await send(st(200))
         XCTAssertEqual(r.0, .ok)
-        let seen = Registry.requests()
+        let seen = await Registry.shared.requests()
         XCTAssertEqual(seen.first?.headers["Content-Encoding"], "gzip")
         XCTAssertEqual(seen.first?.headers["Content-Type"], "application/json")
     }
 
     func testPOSTVeUrlSonuBatch() async {
         _ = await send(st(200))
-        let seen = Registry.requests()
+        let seen = await Registry.shared.requests()
         XCTAssertEqual(seen.first?.method, "POST")
         XCTAssertEqual(seen.first?.url?.absoluteString, "https://ingest.example.com/v1/batch")
     }
 
     func testEndpointSonundakiEgikCizgiCiftlenmez() async {
-        Registry.reset(st(200))
-        let cfg = URLSessionConfiguration.ephemeral
-        cfg.protocolClasses = [StubProtocol.self]
+        await Registry.shared.reset()
         let t = Transport(endpoint: URL(string: "https://ingest.example.com/")!, apiKey: "k",
-                          session: URLSession(configuration: cfg))
+                          session: session(st(200)))
         _ = await t.send(body: "{}")
-        let seen = Registry.requests()
+        let seen = await Registry.shared.requests()
         XCTAssertEqual(seen.first?.url?.absoluteString, "https://ingest.example.com/v1/batch")
     }
 
     func testIstekZamanAsimi30Saniye() async {
         _ = await send(st(200))
-        let seen = Registry.requests()
+        let seen = await Registry.shared.requests()
         XCTAssertEqual(seen.first?.timeout, 30)
     }
 
@@ -284,26 +293,25 @@ final class TransportTests: XCTestCase {
     func testGovdeGzipZarfiIcindeGonderilir() async {
         let json = "{\"events\":[{\"event\":\"ö\"}]}"
         _ = await send(st(200), body: json)
-        let seen = Registry.requests()
+        let seen = await Registry.shared.requests()
         XCTAssertEqual(seen.first?.body, Gzip.compress(Data(json.utf8)))
         XCTAssertEqual(Array((seen.first?.body ?? Data()).prefix(3)), [0x1f, 0x8b, 0x08])
     }
 
     func testSikistirmaBasarisizsaGovdeDuzGiderVeBaslikYazilmaz() async {
-        Registry.reset(st(200))
-        let cfg = URLSessionConfiguration.ephemeral
-        cfg.protocolClasses = [StubProtocol.self]
-        let t = Transport(endpoint: endpoint, apiKey: "k", session: URLSession(configuration: cfg),
+        await Registry.shared.reset()
+        let t = Transport(endpoint: endpoint, apiKey: "k", session: session(st(200)),
                           compress: { _ in nil })
         let r = await t.send(body: "{\"a\":1}")
         XCTAssertEqual(r.0, .ok)
-        let seen = Registry.requests()
+        let seen = await Registry.shared.requests()
         XCTAssertEqual(seen.first?.body, Data("{\"a\":1}".utf8))
         XCTAssertNil(seen.first?.headers["Content-Encoding"], "düz gövdeye gzip başlığı yazılırsa sunucu çözemez")
     }
 
     func testBirIstekBirDenemeTekrarSaymaz() async {
         _ = await send(st(503))
-        XCTAssertEqual(Registry.requests().count, 1)
+        let seen = await Registry.shared.requests()
+        XCTAssertEqual(seen.count, 1)
     }
 }
