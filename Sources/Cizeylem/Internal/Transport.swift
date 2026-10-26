@@ -74,6 +74,9 @@ struct Transport: Sendable {
         case 400: return (.drop, nil)
         case 401, 403: return (.fatal, nil)
         case 413: return (.split, nil)
+        // SPEC §3: 429 başlıksız ya da bozuk başlıkla da 30 sn. nil dönse çağıranın 1 sn'lik
+        // takvimi devreye girerdi; sunucu "yavaşla" derken hızlanmak olurdu.
+        case 429: return (.retry, retryAfter(http) ?? 30)
         default: return (.retry, retryAfter(http))
         }
     }

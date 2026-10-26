@@ -178,19 +178,36 @@ final class TransportTests: XCTestCase {
     }
 
     func testRetryAfterCopHeaderNilDoner() async {
-        let r = await send(st(429, ["Retry-After": "yarın bakarız"]))
+        // 429 dışı kodlarda bozuk başlık nil: çağıran kendi takvimine döner.
+        let r = await send(st(503, ["Retry-After": "yarın bakarız"]))
         XCTAssertEqual(r.0, .retry)
         XCTAssertNil(r.retryAfter)
-        let r2 = await send(st(429, ["Retry-After": "nan"]))
+        let r2 = await send(st(503, ["Retry-After": "nan"]))
         XCTAssertNil(r2.retryAfter, "NaN sonsuz bekleme/çökme olmasın")
-        let r3 = await send(st(429, ["Retry-After": "inf"]))
+        let r3 = await send(st(503, ["Retry-After": "inf"]))
         XCTAssertNil(r3.retryAfter)
     }
 
     func testRetryAfterYoksaNil() async {
-        let r = await send(st(429))
+        let r = await send(st(503))
         XCTAssertEqual(r.0, .retry)
         XCTAssertNil(r.retryAfter)
+    }
+
+    func test429BasliksizVeBozukBaslikta30Saniye() async {
+        for h in [[:], ["Retry-After": "yarın bakarız"], ["Retry-After": "nan"],
+                  ["Retry-After": "inf"], ["Retry-After": ""]] as [[String: String]] {
+            let r = await send(st(429, h))
+            XCTAssertEqual(r.0, .retry, "\(h)")
+            XCTAssertEqual(r.retryAfter, 30, "\(h)")
+        }
+    }
+
+    func test429GecerliBaslikVarsayilaniEzer() async {
+        let r = await send(st(429, ["Retry-After": "7"]))
+        XCTAssertEqual(r.retryAfter, 7)
+        let z = await send(st(429, ["Retry-After": "0"]))
+        XCTAssertEqual(z.retryAfter, 0, "açık 0, 30'a dönmemeli")
     }
 
     func testRetryAfterBoslukluSaniyeKabulEdilir() async {
