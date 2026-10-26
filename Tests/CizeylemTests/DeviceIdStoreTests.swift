@@ -2,7 +2,6 @@ import XCTest
 @testable import Cizeylem
 
 final class DeviceIdStoreTests: XCTestCase {
-    private struct FakeVendor: VendorIdReading { let hash: String?; func currentHash() -> String? { hash } }
 
     private var dir: URL!
     private var suite: String!
@@ -26,7 +25,7 @@ final class DeviceIdStoreTests: XCTestCase {
         _ name: String = "ios", vendor: String? = "h1", uuid: String = "ID-1",
         readFile: @escaping @Sendable (URL) throws -> Data = { try Data(contentsOf: $0) }
     ) -> DeviceIdStore {
-        DeviceIdStore(platform: platform(name), vendorId: FakeVendor(hash: vendor),
+        DeviceIdStore(platform: platform(name), vendorHash: vendor,
                       uuid: { uuid }, defaultsSuite: suite, readFile: readFile)
     }
 

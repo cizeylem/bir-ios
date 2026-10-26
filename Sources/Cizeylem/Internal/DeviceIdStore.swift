@@ -9,7 +9,11 @@ import Foundation
 /// çağrıları zaten sıraya koyar.
 struct DeviceIdStore: Sendable {
     private let platform: Platform
-    private let vendorId: VendorIdReading
+    /// IDFV özeti, süreç başında ana thread'de bir kez örneklenip buraya değer olarak verilir.
+    /// Süreç içinde yeniden okunmaz: kilitli cihazda `nil` geldiyse yedek tespiti o süreç boyunca
+    /// atlanır ve sonradan IDFV açılsa da bilerek kaçırılır; güvenli yön budur (kimlik korunur).
+    /// Arka plandan ana thread'e senkron sıçrama kilitlenme riski taşıdığı için okuma burada yapılmaz.
+    private let vendorHash: String?
     private let uuid: @Sendable () -> String
     private let defaultsSuite: String?
     /// Dosya okumasını enjekte edilebilir kılmanın nedeni: gerçek `isProtectedDataAvailable`
@@ -23,13 +27,13 @@ struct DeviceIdStore: Sendable {
 
     init(
         platform: Platform,
-        vendorId: VendorIdReading,
+        vendorHash: String?,
         uuid: @escaping @Sendable () -> String,
         defaultsSuite: String? = nil,
         readFile: @escaping @Sendable (URL) throws -> Data = { try Data(contentsOf: $0) }
     ) {
         self.platform = platform
-        self.vendorId = vendorId
+        self.vendorHash = vendorHash
         self.uuid = uuid
         self.defaultsSuite = defaultsSuite
         self.readFile = readFile
@@ -71,7 +75,7 @@ struct DeviceIdStore: Sendable {
         }
 
         // Kimlik üretimi IDFV'yi beklemez; `nil` ise yalnız hash yazılmaz.
-        let current = vendorId.currentHash()
+        let current = vendorHash
 
         guard let id = existing else {
             let fresh = uuid()
