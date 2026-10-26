@@ -8,13 +8,13 @@ Xcode 26.2 (17C52), Swift 6.2.3.
 | İddia | Durum | Kanıt |
 |---|---|---|
 | Paket testleri macOS'ta geçer | kanıtlandı | `swift test` (önceki görevler) |
-| Paket testleri **iOS simülatöründe** geçer | kanıtlandı | `scripts/test-simulators.sh`: iOS 26.2, iPad Air 11-inch (M3), **366 test, 0 başarısızlık**, `** TEST SUCCEEDED **` |
-| Paket testleri **tvOS simülatöründe** geçer | **KANITLANMADI** | Bu makinede tvOS simülatör runtime'ı yoktu (`simctl list runtimes` yalnız iOS 18.3 ve 26.2). `xcodebuild` tvOS için `generic/platform=tvOS Simulator` hedefini bile kurmuyor ("tvOS 26.2 is not installed"). Betik tvOS'u ATLANDI diye bildirdi ve çıkış 1 verdi (katı varsayılan) |
-| tvOS kodu derlenir | kısmen | `swiftc -typecheck` (appletvsimulator26.2 SDK, `arm64-apple-tvos15.0-simulator`, Swift 6, strict concurrency, `-warnings-as-errors`): çekirdek modül ve tvOS örnek kaynakları temiz. Bu **yalnız tür denetimi**; bağlama, paketleme ve çalıştırma yok |
+| Paket testleri **iOS simülatöründe** geçer | kanıtlandı | `scripts/test-simulators.sh`: iOS 26.2, iPad Air 11-inch (M3), **379 test, 0 başarısızlık**, `** TEST SUCCEEDED **` |
+| Paket testleri **tvOS simülatöründe** geçer | **EVET** | tvOS 26.2 runtime'ı `xcodebuild -downloadPlatform tvOS` ile kuruldu, `Cizeylem Apple TV` (Apple TV 4K 3. nesil) cihazı `simctl create` ile açıldı. `./scripts/test-simulators.sh` → `tvOS: GECTI (tvOS 26.2, Cizeylem Apple TV)`, **379 test, 0 başarısızlık**, `** TEST SUCCEEDED **` |
+| tvOS kodu derlenir | **EVET** | Yalnız `swiftc -typecheck` değil: tvOS simülatöründe gerçekten derlendi, bağlandı ve koşturuldu (yukarıdaki satır) |
 | iOS örnek uygulaması 0 uyarıyla derlenir ve arşivlenir | kanıtlandı | `xcodebuild build` ve `archive` (generic iOS, imzasız), `SWIFT_TREAT_WARNINGS_AS_ERRORS=YES` |
 | iOS örneği açılır, rızasızken **diske hiçbir şey yazmaz** | kanıtlandı (tek koşu) | iPad simülatöründe taze kurulum+açılış: ekranda `running: false`, `distinctId: nil`, `queued: 0`, üç rıza `false`. Uygulama veri konteynerinde yalnız sistemin `Saved Application State` dosyaları var; `Library/Preferences`, `Application Support`, `Caches` altında SDK dosyası **yok** |
 | Rıza verilince kimlik/kuyruk oluşur, `flush` gider | **denenmedi** | Düğmelere simülatörde dokunulmadı (bu ortamda dokunma otomasyonu kurulmadı). Yalnız rızasız başlangıç ekranı görüldü |
-| tvOS örneği çalışır | **denenmedi** | Runtime yok |
+| tvOS örneği çalışır | **denenmedi** | Runtime artık kurulu; paket testleri tvOS'ta koştu ama tvOS ÖRNEK UYGULAMASI elle açılıp denenmedi |
 | Privacy report | bkz. §3: **üretilemedi** | |
 | Gerçek cihaz | **yapılmadı** | Hiçbir gerçek iPhone/Apple TV'de denenmedi (bkz. §6) |
 
@@ -26,19 +26,20 @@ iOS 26.2 çalışma zamanında koştu. Düşük sürümlerde eksik API riski (de
 ### Betik davranışı (`scripts/test-simulators.sh`)
 
 Çalışma zamanı varlığı `xcrun simctl list runtimes available` ile, cihaz `simctl list devices available -j`
-ile seçilir; cihaz adı sabit değil. Gerçek çıktı (tvOS runtime'sız makinede):
+ile seçilir; cihaz adı sabit değil. Gerçek çıktı (her iki runtime kuruluyken):
 
 ```
 iOS : GECTI (iOS 26.2, iPad Air 11-inch (M3) Review)
-tvOS: ATLANDI (runtime yok)
-SONUC: BASARISIZ (tvOS atlandı; kurmak için: xcodebuild -downloadPlatform tvOS)
-exit=1
+tvOS: GECTI (tvOS 26.2, Cizeylem Apple TV)
+SONUC: BASARILI
+exit=0
 ```
 
 Varsayılan katı: tvOS atlanırsa çıkış 1. `--allow-missing-tvos` çıkışı 0 yapar ama son satır
 `KISMEN (tvOS KANITLANMADI ...)` der. tvOS runtime'ı kurulduğunda betik aynı komutla her iki platformu koşar;
-**tvOS yolu bu makinede hiç yürütülmedi** (yalnız "runtime yok" dalı denendi). tvOS'ta `flushAt` varsayılanı 5,
-iOS'ta 30 (`Platform.current`) ve tvOS dalının testleri ancak o koşuda görülür.
+Betiğin **her iki dalı da** yürütüldü: önce "runtime yok" dalı (çıkış 1, doğru davrandı), runtime
+kurulduktan sonra iki platformlu dal (çıkış 0). tvOS'ta `flushAt` varsayılanı 5, iOS'ta 30
+(`Platform.current`) ve tvOS dalının testleri o koşuda gerçekten görüldü.
 
 ## 2. Örnek uygulamalar
 
