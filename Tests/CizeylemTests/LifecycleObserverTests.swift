@@ -76,6 +76,12 @@ final class LifecycleObserverTests: XCTestCase {
 
     private func stateURL() -> URL { tempDir().appendingPathComponent("lifecycle") }
 
+    /// root, izin kontrollerini tamamen atlar: `chmod` ile kurulan "yazılamaz dizin" kurgusu
+    /// root'ta çalışmaz ve test YANLIŞ nedenle kırılır. Atlamak, sahte kırmızıdan dürüsttür.
+    private func izinKurgusuGerektirir() throws {
+        try XCTSkipIf(getuid() == 0, "root izin kontrollerini atlıyor; chmod tabanlı kurgu anlamsız")
+    }
+
     private func make(
         _ center: NotificationCenter, _ url: URL, _ sink: LifeSink,
         version: String? = "1.0", build: String? = "10",
@@ -199,6 +205,7 @@ final class LifecycleObserverTests: XCTestCase {
     // MARK: - Karar 1: yazma hatası
 
     func testYazilamazDurumdaInstalledTekrarlanmaz() async throws {
+        try izinKurgusuGerektirir()
         // Salt okunur dizin: durum dosyası yok (ENOENT, yani "ilk açılış") ama yazılamıyor.
         let dir = tempDir()
         try FileManager.default.setAttributes([.posixPermissions: 0o500], ofItemAtPath: dir.path)
@@ -221,6 +228,7 @@ final class LifecycleObserverTests: XCTestCase {
     }
 
     func testYazilamazDurumdaUpdatedTekrarlanmaz() async throws {
+        try izinKurgusuGerektirir()
         let dir = tempDir()
         let url = dir.appendingPathComponent("lifecycle")
         let c0 = NotificationCenter(), s0 = LifeSink()
@@ -479,6 +487,7 @@ final class LifecycleObserverTests: XCTestCase {
 
     /// Okunamayan (izinsiz) ama yazılabilir dizindeki kayıt: karar verilmez ve ÜZERİNE YAZILMAZ.
     func testIzinsizKayitliDosyaUzerineYazilmaz() async throws {
+        try izinKurgusuGerektirir()
         let url = stateURL()
         let original = Data(#"{"build":"10","version":"1.0"}"#.utf8)
         try original.write(to: url)
