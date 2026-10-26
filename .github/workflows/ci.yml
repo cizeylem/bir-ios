@@ -8,9 +8,11 @@
 # yanındaki sürüm yorumunu birlikte güncellemek.
 name: CI
 
+# Push yalnız ana dalda ve sürüm tag'inde; dal itişleri PR üzerinden koşar. Aksi halde açık bir PR'ı
+# olan her dal itişi aynı commit'i İKİ kez koşturur (push + pull_request) ve runner dakikası iki katına çıkar.
 on:
   push:
-    branches: ['**']
+    branches: [main]
     tags: ['[0-9]*']
   pull_request:
 
