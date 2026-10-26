@@ -73,35 +73,33 @@ enum InstallSource {
 
 /// Son bilinen ağ durumu. İzleyici bir kez kurulur; `current` ağ sorgusu yapmaz, beklemez.
 ///
-/// Durum `NWPathMonitor.currentPath`'te durur (iş parçacığı güvenli). İlk güncelleme gelene kadar
-/// durum bilinmez ve `nil` döner (alan yazılmaz): bilmemek ne çevrimdışı olmaktır ne de `other`; `other` yalnız bilinen ama wifi/cellular/ethernet olmayan taşıma içindir. "İlk güncelleme
-/// geldi" bilgisi bir `DispatchGroup`'ta tutulur (tek seferlik mandalı bir semafor sağlar);
-/// paylaşılan değişken ve kilit yok.
+/// Durum `NWPathMonitor.currentPath`'tedir (iş parçacığı güvenli). İlk güncelleme gelene kadar durum
+/// bilinmez ve `nil` döner, alan yazılmaz: bilmemek ne çevrimdışı olmaktır ne de `other`.
+///
+/// "İlk güncelleme geldi" bilgisi 0'dan başlayan bir semafordur, yani fiilen bir bayrak: işleyici her
+/// güncellemede `signal()` eder, `isKnown` bir `wait` + geri `signal` ile bakar. libdispatch semaforu
+/// yalnız değeri başlangıçtan küçükken serbest bırakılırsa çöker; 0'dan başlayınca değer hiçbir zaman
+/// 0'ın altında kalmaz, bu yüzden `deinit`te denge kurmaya, çift ya da gecikmiş işleyici çağrısından
+/// korkmaya gerek yok. Bedeli: iki thread aynı anda `isKnown` okursa biri anlık `false` görebilir; sonuç
+/// yalnız bir event'te eksik `network_type`'tır, yanlış değer değil.
 final class NetworkMonitor: Sendable {
     private let monitor = NWPathMonitor()
-    private let known = DispatchGroup()
-    private let latch = DispatchSemaphore(value: 1)
+    private let updated = DispatchSemaphore(value: 0)
 
     init(autostart: Bool = true) {
-        known.enter()
         guard autostart else { return }
-        let known = known, latch = latch
-        monitor.pathUpdateHandler = { _ in
-            // Mandal yalnız ilk güncellemede açılır; `leave` ikinci kez çağrılsa süreç çökerdi.
-            if latch.wait(timeout: .now()) == .success { known.leave() }
-        }
+        let updated = updated
+        monitor.pathUpdateHandler = { _ in updated.signal() }
         monitor.start(queue: DispatchQueue(label: "co.cizeylem.network", qos: .utility))
     }
 
-    deinit {
-        monitor.cancel()
-        // Dolu bir `DispatchGroup`'u serbest bırakmak libdispatch'i çökertir; bilinmeden kapanırsak dengele.
-        if latch.wait(timeout: .now()) == .success { known.leave() }
-        // Aynı nedenle semafor da ilk değerine dönmeden serbest bırakılamaz.
-        latch.signal()
-    }
+    deinit { monitor.cancel() }
 
-    var isKnown: Bool { known.wait(timeout: .now()) == .success }
+    var isKnown: Bool {
+        guard updated.wait(timeout: .now()) == .success else { return false }
+        updated.signal()
+        return true
+    }
 
     var current: String? {
         guard isKnown else { return nil }

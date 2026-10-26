@@ -153,6 +153,22 @@ final class ContextProviderTests: XCTestCase {
         XCTAssertEqual(NetworkMonitor.classify(satisfied: true, wifi: false, cellular: false, wired: false), "other")
     }
 
+    /// Monitör açıkken bırakılır; güncelleme uçuştayken `deinit` çalışır. Semafor/grup dengesizliği
+    /// libdispatch çökmesi olarak görünürdü.
+    func testMonitorUcusIcindeGuncellemeVarkenBirakilabilir() {
+        for i in 0..<300 {
+            var m: NetworkMonitor? = NetworkMonitor()
+            if i % 3 == 0 { _ = m?.current }
+            if i % 3 == 1 { Thread.sleep(forTimeInterval: 0.001) }
+            m = nil
+        }
+        let m = NetworkMonitor()
+        let deadline = Date().addingTimeInterval(5)
+        while !m.isKnown && Date() < deadline { Thread.sleep(forTimeInterval: 0.01) }
+        XCTAssertTrue(m.isKnown)
+        XCTAssertTrue(m.isKnown)
+    }
+
     func testAgSiniflandirmasi() {
         XCTAssertEqual(NetworkMonitor.classify(satisfied: false, wifi: true, cellular: true, wired: true), "offline")
         XCTAssertEqual(NetworkMonitor.classify(satisfied: true, wifi: true, cellular: true, wired: true), "wifi")
@@ -291,13 +307,15 @@ final class ContextProviderTests: XCTestCase {
 
     // MARK: Ana thread kuralı (karar 2)
 
-    func testGetAnaThreadDisindanCagrilabilir() async {
+    // Asıl güvence derleyicidir: `get()` nonisolated, UIKit/AppKit API'leri `@MainActor`; Swift 6 modunda
+    // `get()` içine `UIScreen`/`UIDevice` çağrısı eklenirse derleme hatası verir. Aşağıdaki testler
+    // çalışma zamanı davranışını tamamlar, derleyici güvencesinin yerini tutmaz.
+
+    func testGetEszamanliGorevlerdenCalisir() async {
         let p = provider()
         let results = await withTaskGroup(of: [String: String].self) { group in
             for _ in 0..<8 {
                 group.addTask {
-                    // Detached görevler ana thread'de değil; get() saf olmalı.
-                    precondition(!Thread.isMainThread)
                     let c = p.get(consent: Consent(analytics: true), appState: "foreground", attStatus: nil)
                     return ["p": c["platform"] as? String ?? "", "w": "\(c["screen_width"] as? Double ?? 0)"]
                 }
@@ -310,16 +328,26 @@ final class ContextProviderTests: XCTestCase {
         XCTAssertTrue(results.allSatisfy { $0["p"] == "ios" && $0["w"] == "390.0" })
     }
 
-    func testGetArkaPlanThreadindenSenkronCagrilabilirAnaThreadBloke() {
-        // Ana thread'i burada bekleterek bloke ediyoruz: get() ana thread'e sıçrasaydı kilitlenir.
+    /// Ana kuyruk gerçekten bloke: bir blok ana thread'i 1,5 sn uyutuyor. `get()` ana thread'e sıçrasa
+    /// (`DispatchQueue.main.sync`) o blok bitene kadar beklerdi ve süre sınırı aşılırdı.
+    func testGetAnaKuyrukBlokeIkenArkaPlandaHizlaBiter() {
         let p = provider()
+        let mainBlocked = DispatchSemaphore(value: 0)
         let done = expectation(description: "get bitti")
+        DispatchQueue.main.async {
+            mainBlocked.signal()
+            Thread.sleep(forTimeInterval: 1.5)
+        }
         Thread.detachNewThread {
             XCTAssertFalse(Thread.isMainThread)
+            mainBlocked.wait()
+            let start = Date()
             _ = p.get(consent: Consent(analytics: true), appState: "background", attStatus: "denied")
+            XCTAssertLessThan(Date().timeIntervalSince(start), 0.75, "get() ana kuyruğu bekledi")
             done.fulfill()
         }
-        wait(for: [done], timeout: 5)
+        // wait(for:) ana run loop'u döndürür; yukarıdaki uyku bloğu burada ana thread'i gerçekten tutar.
+        wait(for: [done], timeout: 10)
     }
 
     @MainActor
