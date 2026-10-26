@@ -5,24 +5,30 @@ import Foundation
 /// Dosya mantıksal sınırın (`maxEvents`, `maxBytes`) %10 üstüne kadar büyür ve aşılınca
 /// tek seferde budanır: sınırda bekleyen çevrimdışı bir kuyruk her event'te dosyayı
 /// baştan yazmasın. Dışarıya yalnız mantıksal görünüm (en yeni satırlar) çıkar.
-final class EventQueue: Sendable {
+///
+/// Bilerek `Sendable` DEĞİL ve kendi kilidi yok: sahibi (actor) onu izole eder, derleyici de
+/// tipin actor sınırından kaçmadığını kanıtlar.
+///
+/// Süreçler arası kilit (FileLock) de yok. Dosyalar uygulamanın kendi konteynerinde
+/// (Application Support / Caches); app extension'lar ayrı konteynerde çalışır ve app group
+/// kullanmıyoruz, yani dizini paylaşan ikinci bir süreç yok. İleride app group'a geçilirse
+/// bu varsayım yeniden değerlendirilmelidir.
+final class EventQueue {
     private let fileURL: URL
     private let directory: URL
     private let maxEvents: Int
     private let maxBytes: Int
     private let slackEvents: Int
     private let slackBytes: Int
-    private let lock = NSLock()
 
-    // Tüm değişken durum `lock` ile korunur; Swift 6 bunu kendi başına kanıtlayamaz.
-    nonisolated(unsafe) private var lines: [String] = []
+    private var lines: [String] = []
     /// `lines` içinde mantıksal görünümün başladığı indeks (öncesi budanmayı bekleyen taşma).
-    nonisolated(unsafe) private var start = 0
-    nonisolated(unsafe) private var logicalBytes = 0
-    nonisolated(unsafe) private var overflowBytes = 0
-    nonisolated(unsafe) private var dropped = 0
+    private var start = 0
+    private var logicalBytes = 0
+    private var overflowBytes = 0
+    private var dropped = 0
 
-    init(directory: URL, maxEvents: Int, maxBytes: Int) throws {
+    init(directory: URL, maxEvents: Int, maxBytes: Int) {
         self.directory = directory
         self.fileURL = directory.appendingPathComponent("queue.jsonl")
         self.maxEvents = max(1, maxEvents)
@@ -33,26 +39,22 @@ final class EventQueue: Sendable {
     }
 
     var count: Int {
-        lock.lock(); defer { lock.unlock() }
-        return lines.count - start
+                return lines.count - start
     }
 
     var droppedCount: Int {
-        lock.lock(); defer { lock.unlock() }
-        return dropped + start
+                return dropped + start
     }
 
     func peek(_ n: Int) -> [String] {
-        lock.lock(); defer { lock.unlock() }
-        guard n > 0 else { return [] }
+                guard n > 0 else { return [] }
         return Array(lines[start...].prefix(n))
     }
 
     func append(_ line: String) {
         // Satır ayracı içeren metin dosyada iki kayda bölünürdü; geçerli JSON bunu içermez.
         guard !line.isEmpty, !line.contains("\n"), !line.contains("\r") else { return }
-        lock.lock(); defer { lock.unlock() }
-        lines.append(line)
+                lines.append(line)
         logicalBytes += size(line)
         trimLogical()
         if start >= slackEvents || overflowBytes >= slackBytes {
@@ -63,8 +65,7 @@ final class EventQueue: Sendable {
     }
 
     func removeFirst(_ n: Int) {
-        lock.lock(); defer { lock.unlock() }
-        guard n > 0 else { return }
+                guard n > 0 else { return }
         let toRemove = min(n, lines.count - start)
         guard toRemove > 0 else { return }
         // Önce görünmez taşmayı sayaca al, sonra gönderilenleri at (onlar "düşen" değil).
