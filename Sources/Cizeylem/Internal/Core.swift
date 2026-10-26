@@ -246,6 +246,21 @@ actor Core {
     private var appState: String
     private var existingInstall = false
     private var loggedDisabled = false
+    /// Bu SÜREÇTE açık bir `setConsent` ile her şeyi sildik mi (bkz. `erase()`).
+    ///
+    /// Neden gerekli: `erase()` bizim depomuzu siler ama **Amplitude'un deposunu silemez**
+    /// (kural: Amplitude kaydına dokunulmaz). Rıza geri verilince devralma zinciri baştan
+    /// koşsaydı aynı eski `device_id` yeniden benimsenir, yani açık "beni unut" talebi boşa
+    /// çıkar ve kullanıcı sunucudaki eski profiline yeniden bağlanırdı.
+    ///
+    /// Kalıcı bir "unut" işareti YAZAMAYIZ: rızasızken hiçbir iz bırakmama kuralı bunu yasaklar.
+    /// Bu yüzden işaret süreç ömrüyle sınırlı; rıza geri gelir gelmez taze bir kimlik üretip
+    /// **kalıcı yazarız** ve sonraki süreçler kendi depomuzu gördüğü için devralma bir daha hiç
+    /// tetiklenmez — düzeltme kalıcı olur, bayrak yalnız aradaki boşluğu kapatır.
+    ///
+    /// **Kalan açık:** süreç, `erase()` ile rızanın yeniden verilmesi arasında ölürse bayrak
+    /// kaybolur ve devralma bir kez daha koşar. Kalıcı iz bırakmadan kapatılamıyor.
+    private var erasedInProcess = false
 
     init(config: Configuration, deps: Dependencies) {
         self.config = config
@@ -318,6 +333,10 @@ actor Core {
     private func enable() async {
         guard dispatcher == nil else { return }
         adoptExistingIdentity()
+        // Aynı süreçte sildiysek uygulama yeniden KURULMADI; durumu önceden yazarız ki gözlemci
+        // "ilk açılış" sanıp ikinci bir `cz_app_installed` üretmesin (kurulum metriği şişmesin).
+        // Bu yazım rıza geri verildikten SONRA olur, yani rızasız iz bırakma kuralını bozmaz.
+        if erasedInProcess { seedLifecycleState() }
         userId = identityStore.read()
         let queue = EventQueue(
             directory: deps.platform.queueDirectory,
@@ -334,6 +353,13 @@ actor Core {
     /// `migrated_from` her açılışta yeniden tetiklenirdi.
     private func adoptExistingIdentity() {
         guard deviceIdStore.read() == nil else { return }
+
+        // Açık geri almadan sonra devralma ZİNCİRİ HİÇ KOŞMAZ: aksi halde sildiğimiz kimlik
+        // Amplitude'un (silemediğimiz) deposundan geri gelirdi. Yerine taze anonim kimlik.
+        if erasedInProcess {
+            mintFreshIdentity()
+            return
+        }
 
         // 1. Açık `Configuration(deviceId:)` — geliştiricinin bilinçli seçimi, `legacyAmplitude`
         //    bayrağından bağımsızdır (o bayrak yalnız Amplitude'u OKUMAYI kapatır).
@@ -358,6 +384,20 @@ actor Core {
         apply(found)
     }
 
+    /// Geri alma sonrası taze anonim kimlik. Kalıcı yazılır: sonraki süreçler kendi depomuzu
+    /// görür ve devralma bir daha tetiklenmez.
+    private func mintFreshIdentity() {
+        let fresh = deps.uuid()
+        deviceIdStore.write(fresh)
+        guard deviceIdStore.read() == fresh else {
+            // Yazılamadı: bayrak duruyor, bir sonraki `enable()` yeniden dener. Devralmaya
+            // DÖNÜLMEZ — yazamamak, silinmiş kimliği geri getirmek için gerekçe değildir.
+            warn("geri alma sonrası taze kimlik yazılamadı; sonraki denemede tekrarlanacak")
+            return
+        }
+        deviceId = fresh
+    }
+
     private func apply(_ takeover: Takeover) {
         deviceIdStore.write(takeover.deviceId)
         // Devralınan kimlik diske YAZILAMADIYSA devralma olmamış sayılır: `migrated_from`
@@ -375,6 +415,13 @@ actor Core {
         // ezemez. Bilgi yine de kaybolmasın diye ilk event'e `$set_once` ile iliştirilir;
         // panelde bu kullanıcılar ayırt edilebilir kalır.
         if takeover.optOut { pending.setOnceMap["migrated_opt_out"] = .bool(true) }
+    }
+
+    /// Yaşam döngüsü durumunu "bu sürüm zaten kurulu" diye işaretler.
+    private func seedLifecycleState() {
+        let store = LifecycleStateStore(
+            url: location.url, usesDefaults: location.usesDefaults, defaultsSuite: deps.defaultsSuite)
+        _ = store.save(LifecycleSnapshot(version: deps.app.version, build: deps.app.build))
     }
 
     private func startLifecycle() {
@@ -438,7 +485,6 @@ actor Core {
     /// yok ederdi.
     func setConsent(_ next: Consent) async {
         if !started { started = true }
-        let previous = consent
         // Bellekteki rıza her durumda güncellenir: diske yazılamasa bile bu süreçte host'un
         // iradesi geçerlidir (daraltmada daha kısıtlayıcı, genişletmede host zaten istiyor).
         consent = next
@@ -449,9 +495,9 @@ actor Core {
         }
         if next.allowsWrite {
             await enable()
-        } else if previous.allowsWrite || dispatcher != nil {
-            erase()
         } else {
+            // Önceki rıza da kapalı olsa silinir: bu AÇIK bir "rıza yok" beyanıdır ve bir okuma
+            // hatasından sonra kalmış olabilecek kayıtları da götürmesi gerekir.
             erase()
         }
     }
@@ -468,6 +514,7 @@ actor Core {
     /// Rızasız kullanıcıda bizden iz kalmaz: kuyruk, kimlik, oturum ve yaşam döngüsü durumu silinir.
     private func erase() {
         shutdown()
+        erasedInProcess = true
         deviceId = nil
         userId = nil
         pending = Pending()
@@ -486,7 +533,8 @@ actor Core {
         ] {
             defaults.removeObject(forKey: key)
         }
-        // Yaşam döngüsü durumu kuyruk dizininin DIŞINDA (bkz. `LifecycleLocation`); ayrıca silinir.
+        // Yaşam döngüsü durumu kuyruk dizininden BAĞIMSIZ konumlanır (tvOS'ta `UserDefaults`,
+        // iOS/macOS'ta aynı Application Support dizini); her iki yolda da ayrıca silinir.
         if location.usesDefaults {
             defaults.removeObject(forKey: LifecycleStateStore.defaultsKey)
         } else {
@@ -504,7 +552,15 @@ actor Core {
     /// `user_id` ile (SPEC §2, `bir-js` `client.ts` ile aynı).
     func identify(_ newUserId: String, _ props: [String: PropValue]? = nil) async {
         guard consent.allowsWrite else { return }
-        await enqueue(name: "$identify", props: nil, eventUserId: newUserId, extraSet: props)
+        // `user_id` YALNIZ `$identify` gerçekten kuyruğa girdiyse benimsenir. Kimlik
+        // elde edilemediğinde (veri koruması kilidi) sessizce benimsemek, eski anonim
+        // `distinct_id` ile `user_id` arasındaki bağı KALICI olarak koparırdı: sonraki
+        // event'ler `user_id` ile gider, bağı kuracak `$identify` ise hiç üretilmemiştir
+        // ve kullanıcının anonim geçmişi sunucuda öksüz kalır.
+        guard await enqueue(name: "$identify", props: nil, eventUserId: newUserId, extraSet: props) else {
+            warn("identify: event üretilemedi, user_id benimsenmedi; bağ bir sonraki çağrıda kurulacak")
+            return
+        }
         userId = newUserId
         identityStore.write(newUserId)
     }
@@ -535,7 +591,11 @@ actor Core {
     func sendUserProperties(userId newUserId: String?) async {
         guard consent.allowsWrite else { return }
         guard !pending.isEmpty || newUserId != nil else { return }
-        await enqueue(name: "$identify", props: nil, eventUserId: newUserId, extraSet: nil)
+        // `identify()` ile aynı kural: bağ kurulamadıysa `user_id` benimsenmez.
+        guard await enqueue(name: "$identify", props: nil, eventUserId: newUserId, extraSet: nil) else {
+            warn("sendUserProperties: event üretilemedi, user_id benimsenmedi")
+            return
+        }
         guard let newUserId else { return }
         userId = newUserId
         identityStore.write(newUserId)
@@ -601,14 +661,18 @@ actor Core {
 
     // MARK: - Kuyruğa yazma
 
+    /// Satır gerçekten kuyruğa girdiyse `true`. Çağıran bunu kimlik bağını kurup kurmayacağına
+    /// karar vermek için kullanır: üretilmeyen bir `$identify` için `user_id` benimsenirse eski
+    /// anonim `distinct_id` ile yeni `user_id` arasındaki bağ KALICI olarak kaybolur.
+    @discardableResult
     private func enqueue(
         name: String, props: [String: PropValue]?, eventUserId: String?, extraSet: [String: PropValue]?
-    ) async {
-        guard consent.allowsWrite else { return }
-        guard let dispatcher, let session else { return }
+    ) async -> Bool {
+        guard consent.allowsWrite else { return false }
+        guard let dispatcher, let session else { return false }
         // Bu üç çıkış da bekleyenleri KORUR (madde 3): `pending` yalnız satır kuyruğa
         // girdikten sonra boşaltılır.
-        guard let id = ensureDeviceId() else { return }
+        guard let id = ensureDeviceId() else { return false }
 
         var ops = pending
         if let extraSet {
@@ -631,11 +695,12 @@ actor Core {
 
         guard !line.isEmpty else {
             warn("event serileştirilemedi, atlandı: \(name)")
-            return
+            return false
         }
         pending = Pending()
         await dispatcher.enqueue(line)
         if await dispatcher.stats().queued >= flushAtValue { scheduleFlush() }
+        return true
     }
 
     /// Kimliği döner; yoksa üretmeyi dener. Üretilemezse SDK **sessizce ölmez**: durum

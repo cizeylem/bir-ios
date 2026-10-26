@@ -387,6 +387,166 @@ final class CizeylemTests: XCTestCase {
         XCTAssertEqual(sent, 0, "ama fail-closed: okunamayan rıza ile event de yazılmaz/gönderilmez")
     }
 
+    func testGeriAlmaSonrasiYenidenRizaEskiKimligiDIRILTMEZ() async {
+        // Important 1: `erase()` BİZİM depomuzu siler ama Amplitude'unkini silemez. Devralma
+        // zinciri baştan koşarsa açık "beni unut" talebi boşa çıkar, kullanıcı sunucudaki eski
+        // profiline yeniden bağlanır, `migrated_from` ve `cz_app_installed` ikinci kez gider.
+        let net = Net()
+        let center = NotificationCenter()
+        var d = deps(net, freshLifecycle: true)
+        d.notificationCenter = center
+        d.takeoverOverride = Takeover(deviceId: "amplitude-id", source: "amplitude-swift", optOut: false)
+        let c = Core(config: Configuration(writeKey: "ck_w_test", legacyAmplitude: true), deps: d)
+
+        await grant(c)
+        let ilk = await c.distinctId()
+        XCTAssertEqual(ilk, "amplitude-id", "ilk rızada devralma çalışır")
+        _ = await waitUntil { await c.stats().queued >= 1 }
+        await c.flush()
+
+        await c.setConsent(Consent())              // açık "beni unut"
+        await c.setConsent(Consent(analytics: true))  // ayar ekranında geri açıldı
+        await c.track("yeniden")
+        _ = await waitUntil { await c.stats().queued >= 1 }
+        await c.flush()
+
+        let yeni = await c.distinctId()
+        XCTAssertNotNil(yeni)
+        XCTAssertNotEqual(yeni, "amplitude-id", "(a) geri almadan sonra eski kimlik DİRİLMEZ")
+        XCTAssertNotNil(UUID(uuidString: yeni ?? ""), "taze anonim kimlik UUID'dir")
+
+        let evs = await net.events
+        let sonrakiler = evs.drop { $0.name != "yeniden" && $0.distinctId == "amplitude-id" }
+        XCTAssertEqual(evs.filter { !$0.setOnce.isEmpty && $0.distinctId == yeni }.count, 0,
+                       "(b) `migrated_from` ikinci kez gitmez")
+        XCTAssertEqual(evs.filter { $0.name == "cz_app_installed" && $0.distinctId == yeni }.count, 0,
+                       "(c) aynı/yeni kimliğe ikinci `cz_app_installed` yazılmaz")
+        XCTAssertEqual(sonrakiler.filter { $0.name == "yeniden" }.count, 1)
+        await c.shutdown()
+    }
+
+    func testGeriAlmaSonrasiTazeKimlikKALICIDIR() async throws {
+        // Düzeltmenin kalıcı olması buna bağlı: taze kimlik rıza geri verilir verilmez
+        // **hemen** diske yazılmalı. Beklenirse (ilk event'e kadar) süreç aradaki boşlukta
+        // ölünce sonraki süreç boş depo + bayraksız başlar ve devralma yeniden koşar.
+        // Bu yüzden burada `distinctId()`/`track()` ÇAĞIRILMAZ: yazımı tetikleyen tek şey
+        // rıza geri verilmesi olmalı.
+        let net = Net()
+        var d = deps(net)
+        d.takeoverOverride = Takeover(deviceId: "amplitude-id", source: "amplitude-swift", optOut: false)
+        let cfg = Configuration(writeKey: "ck_w_test", legacyAmplitude: true)
+
+        let c1 = Core(config: cfg, deps: d)
+        await grant(c1)
+        await c1.setConsent(Consent())
+        await c1.setConsent(Consent(analytics: true))
+        await c1.shutdown()
+
+        let idFile = dir.appendingPathComponent("device_id")
+        let taze = try String(contentsOf: idFile, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines)
+        XCTAssertNotEqual(taze, "amplitude-id", "taze kimlik rıza geri verilince HEMEN yazılır")
+        XCTAssertNotNil(UUID(uuidString: taze))
+
+        let c2 = Core(config: cfg, deps: d)
+        await c2.start()
+        let c2Id = await c2.distinctId()
+        XCTAssertEqual(c2Id, taze, "sonraki süreç kendi depomuzu görür, devralma koşmaz")
+        await c2.track("ikinci_surec")
+        await c2.flush()
+        let evs = await net.events.filter { $0.name == "ikinci_surec" }
+        XCTAssertEqual(evs[0].setOnce, [:], "sonraki süreçte de `migrated_from` yok")
+        XCTAssertEqual(evs[0].distinctId, taze)
+        await c2.shutdown()
+    }
+
+    func testGeriAlmaSonrasiTazeKimlikYazilamazsaBenimsenmezVeUyarilir() async throws {
+        // Yazım doğrulanmadan kimlik benimsenirse: bellekte taze kimlik, diskte hiçbir şey.
+        // Süreç ölünce sonraki süreç boş depo + bayraksız başlar ve devralma DİRİLİR.
+        let net = Net()
+        let logged = LogBox()
+        var d = deps(net)
+        d.takeoverOverride = Takeover(deviceId: "amplitude-id", source: "amplitude-swift", optOut: false)
+        let cfg = Configuration(writeKey: "ck_w_test", legacyAmplitude: true,
+                                logger: { [logged] m in logged.add(m) })
+        let c = Core(config: cfg, deps: d)
+        await grant(c)
+        await c.setConsent(Consent())   // `erase()` dizini komple siler
+
+        // Yazımı düşüren dikiş geri almadan SONRA kurulur.
+        try FileManager.default.createDirectory(
+            at: dir.appendingPathComponent("device_id"), withIntermediateDirectories: true)
+        await c.setConsent(Consent(analytics: true))
+
+        XCTAssertTrue(logged.contains("geri alma sonrası taze kimlik yazılamadı"),
+                      "yazılamayan taze kimlik sessizce benimsenmez")
+        let id = await c.distinctId()
+        XCTAssertNil(id, "diske yazılamayan kimlik kullanılmaz")
+        XCTAssertFalse(logged.contains("migrated_from"))
+        await c.shutdown()
+    }
+
+    func testKimlikYokkenIdentifyUserIdBaginiKOPARMAZ() async {
+        // Important 2: `$identify` üretilemediyse `user_id` kalıcı YAZILMAMALI; yoksa eski
+        // anonim `distinct_id` ile `user_id` arasındaki bağ kalıcı olarak kaybolur.
+        let net = Net()
+        let locked = LockBox()
+        var d = deps(net)
+        d.deviceIdReadFile = { url in
+            if locked.isLocked { throw NSError(domain: NSPOSIXErrorDomain, code: Int(EPERM)) }
+            return try Data(contentsOf: url)
+        }
+        let c = Core(config: config(), deps: d)
+        await grant(c)
+
+        await c.identify("u-bagli")
+        let kilitliId = await c.distinctId()
+        XCTAssertNil(kilitliId, "kilitliyken user_id benimsenmez")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: dir.appendingPathComponent("user_id").path),
+                       "user_id kalıcı YAZILMAZ")
+
+        locked.unlock()
+        let anon = await c.distinctId()
+        XCTAssertNotNil(anon)
+        await c.identify("u-bagli")
+        await c.flush()
+        let evs = await net.events.filter { $0.name == "$identify" }
+        XCTAssertEqual(evs.count, 1, "bağ kilit açılınca kurulur")
+        XCTAssertEqual(evs[0].distinctId, anon, "$identify ESKİ anonim distinct_id ile gider")
+        XCTAssertEqual(evs[0].userId, "u-bagli")
+        let sonId = await c.distinctId()
+        XCTAssertEqual(sonId, "u-bagli")
+        await c.shutdown()
+    }
+
+    func testKimlikYokkenSendUserPropertiesUserIdYazmaz() async {
+        let net = Net()
+        let locked = LockBox()
+        var d = deps(net)
+        d.deviceIdReadFile = { url in
+            if locked.isLocked { throw NSError(domain: NSPOSIXErrorDomain, code: Int(EPERM)) }
+            return try Data(contentsOf: url)
+        }
+        let c = Core(config: config(), deps: d)
+        await grant(c)
+        await c.setUserProperties(["a": .string("b")])
+        await c.sendUserProperties(userId: "u-2")
+
+        let kilitliId = await c.distinctId()
+        XCTAssertNil(kilitliId)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: dir.appendingPathComponent("user_id").path))
+
+        locked.unlock()
+        let anon = await c.distinctId()
+        await c.sendUserProperties(userId: "u-2")
+        await c.flush()
+        let evs = await net.events.filter { $0.name == "$identify" }
+        XCTAssertEqual(evs.count, 1)
+        XCTAssertEqual(evs[0].distinctId, anon)
+        XCTAssertEqual(evs[0].userId, "u-2")
+        XCTAssertEqual(evs[0].set, ["a": "b"], "bekleyenler de korunmuştu")
+        await c.shutdown()
+    }
+
     // MARK: - 3. Rıza yazımı başarısız (madde 1)
 
     /// Yazım yolunu düşüren dikiş: rıza dosyasının yerine (boş) bir DİZİN konur.
