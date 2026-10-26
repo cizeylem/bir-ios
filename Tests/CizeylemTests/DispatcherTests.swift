@@ -302,8 +302,8 @@ final class DispatcherTests: XCTestCase {
     }
 
     func testRetryAfterSonrasiTakvimKelepceliDegerdenDevamEder() async {
-        // 77 sn → takvim 300'e kelepçelenmez, 77 -> 128'e (ilk büyük adım) gider? Hayır: tavan 300,
-        // adım = min(max(77,1),300) = 77; sonraki takvim adımı 77'den büyük ilk değer = 128.
+        // Retry-After takvimin YERİNE geçer: adım = min(max(77,1),300) = 77. Sonraki başlıksız
+        // başarısızlıkta takvim 77'den büyük ilk değere gider, yani 128.
         let net = FakeNet { idx, _ in idx == 0 ? (.retry, 77) : (.retry, nil) }
         let clock = Clock()
         let d = make(lines(1), net: net, clock: clock)
@@ -495,7 +495,7 @@ final class DispatcherTests: XCTestCase {
         XCTAssertEqual(sk, 4)
     }
 
-    func testBozukSatirGecerlilerleKarisikGidiyorBozukOlanReddedilmisSayilir() async {
+    func testBozukSatirGecerlilerleKarisikGidiyorBozukOlanSkippedeSayilir() async {
         let net = FakeNet()
         let d = make([line(1), "çöp", line(2)], net: net, clock: Clock())
         await d.drain()
@@ -645,7 +645,8 @@ final class DispatcherTests: XCTestCase {
         let clock = Clock(ms: 1_760_000_000_123)   // değişkende tutulur: deinit dosyayı siler
         let d = make(lines(1), net: net, clock: clock)
         await d.drain()
-        let body = await net.bodies[0]
+        let bodies = await net.bodies
+        guard let body = bodies.first else { return XCTFail("gövde gönderilmedi") }
         let o = (try? JSONSerialization.jsonObject(with: Data(body.utf8))) as? [String: Any]
         XCTAssertEqual((o?["sent_at"] as? NSNumber)?.int64Value, 1_760_000_000_123)
 
