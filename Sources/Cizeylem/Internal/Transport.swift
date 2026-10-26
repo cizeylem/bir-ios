@@ -44,8 +44,14 @@ struct Transport: Sendable {
     /// `retryAfter` saniyedir ve yalnız `retry` dönen yanıtlarda dolar (referans, başlığı yalnız
     /// düşüş yolunda okur; `drop`/`fatal`/`split` kararını başlık değiştirmemeli).
     func send(body: String) async -> (Outcome, retryAfter: Double?) {
+        await post(path: "/v1/batch", body: body)
+    }
+
+    /// Aynı yazma anahtarı, sıkıştırma ve yanıt eşlemesiyle verilen yola tek POST. Attribution
+    /// uçları da buradan geçer: ikinci bir HTTP yolu, ikinci bir yapılandırma hatası kaynağı olurdu.
+    func post(path: String, body: String) async -> (Outcome, retryAfter: Double?) {
         let raw = Data(body.utf8)
-        var request = URLRequest(url: batchURL())
+        var request = URLRequest(url: url(path))
         request.httpMethod = "POST"
         request.timeoutInterval = 30
         request.setValue("Bearer " + apiKey, forHTTPHeaderField: "Authorization")
@@ -81,11 +87,11 @@ struct Transport: Sendable {
         }
     }
 
-    private func batchURL() -> URL {
+    private func url(_ path: String) -> URL {
         // `endpoint` sonunda `/` varsa `//v1/batch` oluşmasın.
         var s = endpoint.absoluteString
         while s.hasSuffix("/") { s.removeLast() }
-        return URL(string: s + "/v1/batch") ?? endpoint.appendingPathComponent("v1/batch")
+        return URL(string: s + path) ?? endpoint.appendingPathComponent(path)
     }
 
     /// Saniye sayısı ya da HTTP-date; geçmiş tarih ve negatif sayı 0'a kırpılır. Anlaşılmayan

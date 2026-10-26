@@ -120,6 +120,22 @@ public enum Cizeylem {
         pipe.send(.setOptOut(optOut))
     }
 
+    // MARK: - Attribution
+
+    /// `CizeylemAttribution` modülünün çıktısını çekirdeğe taşır. `initialize` çağrılmadan
+    /// kullanılırsa sinyal sessizce düşer.
+    public static var attributionSink: AttributionSink {
+        let pipe = pipe
+        return CoreAttributionSink { route, fields in
+            await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+                pipe.send(.query { core in
+                    await core?.sendAttribution(route, fields)
+                    continuation.resume()
+                })
+            }
+        }
+    }
+
     // MARK: - Kontrol
 
     /// Kuyruğu sunucuya gönderir (en-iyi-çaba, beklenmez).

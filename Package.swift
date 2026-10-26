@@ -16,8 +16,13 @@ let package = Package(
             // olduğu gibi pakete girer, Xcode onu işleyip bozmaz.
             resources: [.copy("Resources/PrivacyInfo.xcprivacy")]
         ),
-        .target(name: "CizeylemAttribution", dependencies: ["Cizeylem"]),
+        .target(
+            name: "CizeylemAttribution",
+            dependencies: ["Cizeylem"],
+            // Attribution'ın kendi Privacy Manifest'i: IDFA beyanı çekirdekte değil burada durur.
+            resources: [.copy("Resources/PrivacyInfo.xcprivacy")]
+        ),
         .testTarget(name: "CizeylemTests", dependencies: ["Cizeylem"]),
-        .testTarget(name: "CizeylemAttributionTests", dependencies: ["CizeylemAttribution"]),
+        .testTarget(name: "CizeylemAttributionTests", dependencies: ["CizeylemAttribution", "Cizeylem"]),
     ]
 )

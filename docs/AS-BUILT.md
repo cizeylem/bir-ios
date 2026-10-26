@@ -141,3 +141,23 @@ yerine geçer). `bir-js` ikiye katlar (1, 2, 4, … 256, 300). Android iOS ile a
   yolu `.process`'tir ve gizlilik raporu/App Store doğrulaması kaynak-paket bundle'ını nasıl tarıyor
   **doğrulanmadı**. Ana paket kaynağına dokunulmadı. Öneri: Xcode'da raporu elle üretip sonuca göre karar.
 - Betik tek bir iOS runtime'ı (en yüksek sürüm) seçer; iOS 15 taban sürümü hiç koşulmaz.
+
+## 8. Attribution modülü (Görev 12)
+
+- **IDFA iki bağımsız katmandan geçer** (Android'de reklam kimliği kimliksiz uca sızmıştı):
+  1. *Kapı*: `Attribution.run` yalnız `Consent.allowsIdfa(on:)` + ATT `authorized` ise IDFA'yı **okur**;
+     `att_status` yalnız `allowsAttStatus` ile okunur/yazılır.
+  2. *Süzme*: çekirdekteki `AttributionBody.anonymous` kimliksiz uca (`/v1/attribution/anon`) giden gövdeden
+     `idfa`, `device_id`, `user_id`, `distinct_id` anahtarlarını (büyük/küçük harf ve iç içe nesne fark etmez)
+     çağıran ne verirse versin atar. Kimlikli uçta ise `device_id` çekirdeğin kendi rızasıyla (`allowsDeviceId`)
+     eklenir.
+- ATT izni **istenmez**; kaynakta izin isteyen çağrının adı geçmez (test tarar). ATT hukuki rıza değildir.
+- **`NSPrivacyTracking` SDK'da `false`.** Takip kararı uygulamanındır: uygulama IDFA'yı kendi reklam/izleme
+  amacıyla kullanıyorsa kendi manifest'inde `true` yapmalı ve `NSPrivacyTrackingDomains`'i kendisi doldurmalıdır.
+  Attribution hedefinin manifest'i `DeviceID` (IDFA) ve `AdvertisingData` (AdServices token) toplanan veri
+  türlerini `Linked=true`, `Tracking=false`, amaç `Analytics` olarak beyan eder.
+- Kapılar (`AttributionRoute`, `allowsIdfa` vb.) iki modül arasında kullanılsın diye `package` erişimli
+  (public API değil).
+- tvOS: AdServices/AdAttributionKit/SKAdNetwork yok; `AdServicesToken.read()` `nil`, `TrackingStatus` `unavailable`.
+- Alan adları (`adservices_token`, `att_status`, `idfa`) ve kimlikli uç yolu (`/v1/attribution`) sunucu
+  sözleşmesinde henüz yazılı değil; tahmindir (bkz. Görev 12 raporu, açık sorular).

@@ -17,7 +17,7 @@ public struct Consent: Sendable, Equatable {
 
 /// Attribution sinyalinin gideceği uç. Kimliksiz uç (`/v1/attribution/anon`) sözleşmesi gereği
 /// ne `device_id` ne de reklam kimliği taşır.
-enum AttributionRoute: Sendable {
+package enum AttributionRoute: Sendable {
     case identified
     case anonymous
 }
@@ -30,12 +30,12 @@ extension Consent {
 
     /// Sinyalin `device_id` ile gidebilmesi: kalıcı kimliği açan anahtar `analytics`'tir,
     /// `attribution` tek başına yetmez.
-    var allowsIdentifiedAttribution: Bool { analytics && attribution }
+    package var allowsIdentifiedAttribution: Bool { analytics && attribution }
 
     /// `att_status` alanı: reklam paylaşımı kimlikli yolun üstüne biner.
-    var allowsAttStatus: Bool { allowsIdentifiedAttribution && adSharing }
+    package var allowsAttStatus: Bool { allowsIdentifiedAttribution && adSharing }
 
-    func allowsDeviceId(on route: AttributionRoute) -> Bool {
+    package func allowsDeviceId(on route: AttributionRoute) -> Bool {
         switch route {
         case .identified: return allowsIdentifiedAttribution
         case .anonymous: return false
@@ -45,7 +45,7 @@ extension Consent {
     /// IDFA (ve her reklam kimliği) yalnız kimlikli yolda toplanır ve gönderilir. Kimliksiz uçtaki
     /// kayıtlar bir reklam kimliğiyle yeniden kimliklendirilebilir; bu yüzden `adSharing` o uca
     /// hiçbir kombinasyonda IDFA açmaz.
-    func allowsIdfa(on route: AttributionRoute) -> Bool {
+    package func allowsIdfa(on route: AttributionRoute) -> Bool {
         switch route {
         case .identified: return allowsAttStatus
         case .anonymous: return false

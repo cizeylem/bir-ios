@@ -215,6 +215,10 @@ actor Core {
             let session = URLSession(configuration: Core.sessionConfiguration())
             return Transport(endpoint: config.endpoint, apiKey: config.writeKey, session: session)
         }
+        var makeAttributionSender: @Sendable (Configuration) -> AttributionSending = { config in
+            let session = URLSession(configuration: Core.sessionConfiguration())
+            return Transport(endpoint: config.endpoint, apiKey: config.writeKey, session: session)
+        }
     }
 
     private enum LifeSignal: Sendable {
@@ -232,6 +236,7 @@ actor Core {
     private let location: LifecycleLocation
 
     private var consent = Consent()
+    private var attributionSender: AttributionSending?
     private var started = false
     private var dispatcher: Dispatcher?
     private var session: SessionStore?
@@ -667,6 +672,41 @@ actor Core {
     }
 
     func flushAt() -> Int { flushAtValue }
+
+    // MARK: - Attribution
+
+    /// Attribution sinyalini rotasına göre yollar. Rıza yokken de çalışır (kimliksiz uç
+    /// SPEC §5'te izinlidir): bu yüzden `enable()`'a bağlı değil.
+    ///
+    /// Kimlikli uçta çağıranın rotası yetmez: `device_id` yalnız ÇEKİRDEĞİN kendi rızası
+    /// (`allowsDeviceId`) varsa girer. Rıza geri alınmış ama çağıranın elindeki kopya eskiyse
+    /// kimlik yine sızmaz. Kimliksiz uçta gövde son kapıda `AttributionBody` ile süzülür.
+    func sendAttribution(_ route: AttributionRoute, _ fields: [String: PropValue]) async {
+        let raw = fields.mapValues { $0.json }
+        let path: String
+        let body: String
+        switch route {
+        case .anonymous:
+            path = "/v1/attribution/anon"
+            body = AttributionBody.anonymous(raw)
+        case .identified:
+            guard consent.allowsDeviceId(on: .identified), let id = ensureDeviceId() else {
+                warn("attribution kimlikli uca gönderilmedi: rıza yok ya da device_id elde edilemedi")
+                return
+            }
+            path = "/v1/attribution"
+            body = AttributionBody.identified(raw, deviceId: id)
+        }
+        guard !body.isEmpty else {
+            warn("attribution gövdesi oluşturulamadı; gönderilmedi")
+            return
+        }
+        let sender = attributionSender ?? deps.makeAttributionSender(config)
+        attributionSender = sender
+        let (outcome, _) = await sender.post(path: path, body: body)
+        // Tekrar denenmez (tek seferlik sinyal; kuyruk yok) ama sessiz de kalmaz.
+        if outcome != .ok { warn("attribution gönderimi başarısız (\(path)): \(outcome)") }
+    }
 
     func stats() async -> Stats {
         guard let dispatcher else {
