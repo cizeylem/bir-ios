@@ -20,9 +20,48 @@ public enum Attribution {
 
     /// Bir kez toplar ve gönderir; çağıranı bloklamaz (token okuma ağ yapabilir).
     /// `consent` o anki rızanın kopyasıdır; sonradan değişirse yeniden çağrılmalıdır.
+    ///
+    /// Dönüşüm değeri yazıcısını **kurmaz**: o ayrı ve açık bir çağrıdır
+    /// (`enableConversionWriter`). Burada bir varsayılan yoktur, çünkü unutulan çağrı kapalı kalmalı.
     public static func start(sink: AttributionSink, consent: Consent) {
+        _ = startTask(sink: sink, consent: consent, signals: .live, conversion: .live)
+    }
+
+    /// SKAN/AAK dönüşüm değeri yazıcısını açar. **Varsayılan kapalıdır** (K8): host uygulama paralel
+    /// testte değeri AppsFlyer yazdırır ve iki yazıcı postback'i geri alınamaz biçimde bozar.
+    /// Yalnız host bu işi üstlenecekse çağırmalıdır.
+    ///
+    /// - `schemaURL`: uzaktaki sürümlü JSON şema (https). Alınamaz ya da geçersizse hiçbir şey
+    ///   yazılmaz; yedek şema yoktur.
+    /// - `consent`: o anki rızanın kopyası. Karar 5: `adSharing` kapalıysa yazılmaz (bkz. `Consent.allowsConversionWrite`).
+    /// - `events`: şemadaki kurallara göre değerlendirilen event sayaçları.
+    /// - tvOS'ta çağrı sessizce hiçbir şey yapmaz (SKAdNetwork/AAK yok).
+    public static func enableConversionWriter(
+        schemaURL: URL, consent: Consent, events: [String: Int] = ["first_open": 1]
+    ) {
+        _ = enableConversionWriterTask(schemaURL: schemaURL, consent: consent, events: events,
+                                       environment: .live)
+    }
+
+    /// Testin sonucu bekleyebilmesi için `Task` döndürür; `start` bunu çağırmaz.
+    @discardableResult
+    static func startTask(sink: AttributionSink, consent: Consent, signals: Signals,
+                          conversion: ConversionWriter.Environment) -> Task<Void, Never> {
+        // `conversion` bilerek kullanılmaz: start'ın yazıcıya dokunmadığı testle sabitlenir.
+        _ = conversion
+        return Task.detached(priority: .utility) {
+            await run(sink: sink, consent: consent, signals: signals)
+        }
+    }
+
+    @discardableResult
+    static func enableConversionWriterTask(
+        schemaURL: URL, consent: Consent, events: [String: Int],
+        environment: ConversionWriter.Environment
+    ) -> Task<ConversionWriter.Outcome, Never> {
         Task.detached(priority: .utility) {
-            await run(sink: sink, consent: consent, signals: .live)
+            await ConversionWriter.run(schemaURL: schemaURL, consent: consent, events: events,
+                                       environment: environment)
         }
     }
 
