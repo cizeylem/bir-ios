@@ -1,0 +1,93 @@
+# CI: her push, pull request ve sürüm tag'inde paketi derler ve iOS + tvOS simülatöründe test eder.
+# Sır KULLANMAZ; yayın adımı yok (tag'i elle atılır, bkz. docs/RELEASE.md).
+#
+# Her adımın ne KANITLADIĞI docs/RELEASE.md §CI'da yazılı. Kısaca: yeşil = derleme temiz, test sayısı
+# alt sınırın altına düşmedi, hiçbir test atlanmadı ve testler iOS VE tvOS'ta gerçekten koştu.
+#
+# ACTION'LAR TAM COMMIT SHA'SINA SABİTLİ: etiket (`@v4`) taşınabilir, SHA taşınmaz. Yükseltme = SHA'yı ve
+# yanındaki sürüm yorumunu birlikte güncellemek.
+name: CI
+
+on:
+  push:
+    branches: ['**']
+    tags: ['[0-9]*']
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  paket:
+    name: Derleme, uyarı kapısı, macOS testleri
+    runs-on: macos-26
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Xcode ve Swift sürümünü yaz
+        run: |
+          xcodebuild -version
+          swift --version
+
+      # Sürüm tek kaynaktan gelir (VERSION); Swift sabiti elle yazılıdır (SPM'de derleme anı
+      # enjeksiyonu yok, bkz. docs/AS-BUILT.md). Ayrışırsa context.lib_version yanlış çıkar.
+      - name: Sürüm tutarlılığı (VERSION == Cizeylem.version; tag ise tag == VERSION)
+        run: |
+          file_version="$(tr -d '[:space:]' < VERSION)"
+          code_version="$(sed -n 's/.*static let version = "\(.*\)".*/\1/p' Sources/Cizeylem/Cizeylem.swift)"
+          echo "VERSION=$file_version  Cizeylem.version=$code_version"
+          [ -n "$file_version" ] && [ "$file_version" = "$code_version" ] || { echo "::error::VERSION ile Cizeylem.version ayrışmış"; exit 1; }
+          if [ "$GITHUB_REF_TYPE" = "tag" ] && [ "$GITHUB_REF_NAME" != "$file_version" ]; then
+            echo "::error::tag ($GITHUB_REF_NAME) VERSION ($file_version) ile eşleşmiyor (tag ÖNEKSİZ olmalı)"; exit 1
+          fi
+
+      # --build-tests: test hedefleri de derlenir, yani test kodundaki uyarı da kapıya girer.
+      - name: Derle (strict concurrency, testler dahil)
+        run: swift build --build-tests -Xswiftc -strict-concurrency=complete 2>&1 | tee "$RUNNER_TEMP/build.log"
+
+      # Kapı yalnız derleyici uyarısını (`dosya.swift:satır:sütun: warning:`) arar; araç gürültüsü
+      # (ör. appintentsmetadataprocessor) eşleşmez. Bağımlılık yok, yani eşleşen her satır bizim kodumuz.
+      - name: Uyarı kapısı (derleyici uyarısı varsa kırmızı)
+        run: |
+          if grep -E '\.swift:[0-9]+:[0-9]+: warning:' "$RUNNER_TEMP/build.log"; then
+            echo "::error::Derleyici uyarısı var; hedef 0 uyarı"; exit 1
+          fi
+          echo "0 derleyici uyarısı"
+
+      - name: Testler (macOS)
+        run: swift test -Xswiftc -strict-concurrency=complete 2>&1 | tee "$RUNNER_TEMP/test.log"
+
+      - name: Test sayısı kapısı (macOS)
+        run: ./scripts/check-test-count.sh MACOS "$RUNNER_TEMP/test.log"
+
+  simulator:
+    name: iOS + tvOS simülatör testleri
+    runs-on: macos-26
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Xcode sürümünü yaz
+        run: xcodebuild -version
+
+      # tvOS runtime'ı runner imajında olmayabilir; yoksa betik çıkış 1 verir (bilerek). Burada indirilir.
+      # Cihaz yoksa `simctl create` ile açılır. Her ikisi de idempotent: varsa dokunmaz.
+      - name: iOS simülatörünü hazırla
+        run: ./scripts/prepare-simulator.sh iOS
+
+      - name: tvOS runtime'ını kur ve cihazı aç
+        run: ./scripts/prepare-simulator.sh tvOS
+
+      # Katı varsayılan: tvOS atlanırsa, test sayısı alt sınırın altındaysa, test atlanırsa ya da
+      # derleyici uyarısı varsa çıkış 1. `--allow-missing-tvos` CI'da KULLANILMAZ.
+      - name: Simülatör testleri (iOS + tvOS)
+        run: ./scripts/test-simulators.sh
+
+      - name: Simülatörleri kapat
+        if: always()
+        run: xcrun simctl shutdown all

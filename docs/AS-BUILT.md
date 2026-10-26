@@ -1,4 +1,4 @@
-# AS-BUILT: Çizeylem iOS SDK (Görev 11 sonu, çekirdek)
+# AS-BUILT: Çizeylem iOS SDK (Görev 14 sonu)
 
 Bu belge yapılanı ve **neyin kanıtlandığını, neyin kanıtlanmadığını** yazar. Kanıt tarihi: 2026-10-26,
 Xcode 26.2 (17C52), Swift 6.2.3.
@@ -8,8 +8,8 @@ Xcode 26.2 (17C52), Swift 6.2.3.
 | İddia | Durum | Kanıt |
 |---|---|---|
 | Paket testleri macOS'ta geçer | kanıtlandı | `swift test` (önceki görevler) |
-| Paket testleri **iOS simülatöründe** geçer | kanıtlandı | `scripts/test-simulators.sh`: iOS 26.2, iPad Air 11-inch (M3), **379 test, 0 başarısızlık**, `** TEST SUCCEEDED **` |
-| Paket testleri **tvOS simülatöründe** geçer | **EVET** | tvOS 26.2 runtime'ı `xcodebuild -downloadPlatform tvOS` ile kuruldu, `Cizeylem Apple TV` (Apple TV 4K 3. nesil) cihazı `simctl create` ile açıldı. `./scripts/test-simulators.sh` → `tvOS: GECTI (tvOS 26.2, Cizeylem Apple TV)`, **379 test, 0 başarısızlık**, `** TEST SUCCEEDED **` |
+| Paket testleri **iOS simülatöründe** geçer | kanıtlandı | `scripts/test-simulators.sh`: iOS 26.2, iPad Air 11-inch (M3), **427 test (çekirdek 387 + attribution 40), 0 başarısızlık** (Görev 14 koşusu; önceki 379, Görev 11), `** TEST SUCCEEDED **` |
+| Paket testleri **tvOS simülatöründe** geçer | **EVET** | tvOS 26.2 runtime'ı `xcodebuild -downloadPlatform tvOS` ile kuruldu, `Cizeylem Apple TV` (Apple TV 4K 3. nesil) cihazı `simctl create` ile açıldı. `./scripts/test-simulators.sh` → `tvOS: GECTI (tvOS 26.2, Cizeylem Apple TV)`, **427 test, 0 başarısızlık** (Görev 14 koşusu), `** TEST SUCCEEDED **` |
 | tvOS kodu derlenir | **EVET** | Yalnız `swiftc -typecheck` değil: tvOS simülatöründe gerçekten derlendi, bağlandı ve koşturuldu (yukarıdaki satır) |
 | iOS örnek uygulaması 0 uyarıyla derlenir ve arşivlenir | kanıtlandı | `xcodebuild build` ve `archive` (generic iOS, imzasız), `SWIFT_TREAT_WARNINGS_AS_ERRORS=YES` |
 | iOS örneği açılır, rızasızken **diske hiçbir şey yazmaz** | kanıtlandı (tek koşu) | iPad simülatöründe taze kurulum+açılış: ekranda `running: false`, `distinctId: nil`, `queued: 0`, üç rıza `false`. Uygulama veri konteynerinde yalnız sistemin `Saved Application State` dosyaları var; `Library/Preferences`, `Application Support`, `Caches` altında SDK dosyası **yok** |
@@ -67,7 +67,7 @@ satırı karşılığı bulunmadı. Bu oturum arayüz kullanamaz. Denenen ve gö
   manifest **var**, kaynak dosyayla **bayt bayt aynı** ve `plutil -lint` OK. İçerik: `NSPrivacyTracking=false`,
   `NSPrivacyTrackingDomains` boş, `NSPrivacyCollectedDataTypes` boş, yalnız `NSPrivacyAccessedAPICategoryUserDefaults`
   / `CA92.1`. Arşivde başka `PrivacyInfo.xcprivacy` yok (uygulamanın kendisinin de yok; örnek bunu eklemedi).
-- Manifest, SPM'in ürettiği kaynak paketinde (`Cizeylem_Cizeylem.bundle`) duruyor; `Package.swift` `.copy` kullanıyor.
+- Manifest, SPM'in ürettiği kaynak paketinde (`Cizeylem_Cizeylem.bundle`) duruyor; `Package.swift` Görev 14'ten beri `.process` kullanıyor (arşiv bu bölümdeki koşuda `.copy` idi).
   Xcode'un rapor toplayıcısının bu paketten okuyup okumadığı **doğrulanmadı**: beklenen "tracking yok, yalnız
   `CA92.1`" sonucu arayüzde elle üretilene dek **kanıtlanmış sayılmaz**. Elle adım: Xcode > Window > Organizer >
   Archives > arşivi seç > Distribute değil, sağ tık "Generate Privacy Report".
@@ -134,16 +134,14 @@ yerine geçer). `bir-js` ikiye katlar (1, 2, 4, … 256, 300). Android iOS ile a
   gerçekçi değil.
 - `setConsent(Consent())` (üçü kapalı) **yıkıcıdır**: kuyruk, `device_id`, oturum, `user_id` silinir.
 - Ertelenen Minor'lar (Görev 6/10): uçuşta budama `skipped`/`rejected` sayacını sapabilir; 1 MB sayımı `\/`
-  kaçışını saymaz (413 ağı var); rıza öncesi `NWPathMonitor` başlatılması; `PropValue.from` derinlik sınırı yok.
+  kaçışını saymaz (413 ağı var); rıza öncesi `NWPathMonitor` başlatılması; (`PropValue.from` derinlik sınırı Görev 14'te eklendi, §9).
 
 ## 8. Bu görevde bulunan, düzeltilmeyen
 
-- **Manifest `.copy` ile paketlenmiş** (`Package.swift`). Çalışır ve arşivde görünür, ama Xcode'un standart
-  yolu `.process`'tir ve gizlilik raporu/App Store doğrulaması kaynak-paket bundle'ını nasıl tarıyor
-  **doğrulanmadı**. Ana paket kaynağına dokunulmadı. Öneri: Xcode'da raporu elle üretip sonuca göre karar.
+- ~~Manifest `.copy` ile paketlenmiş~~ → **Görev 14'te `.process`'e çevrildi** (bkz. §9, kalem 7).
 - Betik tek bir iOS runtime'ı (en yüksek sürüm) seçer; iOS 15 taban sürümü hiç koşulmaz.
 
-## 8. Attribution modülü (Görev 12)
+## 8b. Attribution modülü (Görev 12)
 
 - **IDFA iki bağımsız katmandan geçer** (Android'de reklam kimliği kimliksiz uca sızmıştı):
   1. *Kapı*: `Attribution.run` yalnız `Consent.allowsIdfa(on:)` + ATT `authorized` ise IDFA'yı **okur**;
@@ -162,3 +160,28 @@ yerine geçer). `bir-js` ikiye katlar (1, 2, 4, … 256, 300). Android iOS ile a
 - tvOS: AdServices/AdAttributionKit/SKAdNetwork yok; `AdServicesToken.read()` `nil`, `TrackingStatus` `unavailable`.
 - Alan adları (`adservices_token`, `att_status`, `idfa`) ve kimlikli uç yolu (`/v1/attribution`) sunucu
   sözleşmesinde henüz yazılı değil; tahmindir (bkz. Görev 12 raporu, açık sorular).
+
+## 9. Görev 14: CI, yayın ve biriken triyaj
+
+CI ve yayın ayrıntısı: `docs/RELEASE.md`. Kısaca: `.github/workflows/ci.yml` (iki iş), test sayısı alt
+sınırı `scripts/test-floor.env` + `scripts/check-test-count.sh`, tvOS runtime/cihaz hazırlığı
+`scripts/prepare-simulator.sh`. **Workflow GitHub'da henüz koşmadı** (yalnız betikler yerelde koştu).
+
+**`Sources/spec-adapter/` yazılmadı:** karşı taraf `bir-js/spec/` (S5) yok; sözleşmeyi tahmin edip kodlamak
+yanlış sözleşmeyi sabitlerdi. Kabul kriteri SPEC §9'a göre birim testlerdir. S5 gelince ayrı commit.
+
+Önceki görevlerden taşınan sekiz triyaj kalemi:
+
+| # | Kalem | Karar |
+|---|---|---|
+| 1 | `LIB_VERSION` gerçek enjeksiyonu | **Açık (bilinçli).** SPM'de derleme anı değer enjeksiyonu yok; yalnız derleme eklentisi ya da üretilmiş kaynak ile olur, ikisi de sıfır araç/bağımlılık kuralına ve paket sadeliğine ters. Koruma: `VERSION` dosyası + `testLibVersionSurumKaynagiylaAyni` + CI "Sürüm tutarlılığı" adımı (tag ise tag == `VERSION` da). Elle iki yer güncellenir (RELEASE.md). |
+| 2 | Rıza kaydının süreçler arası dirilişi (`write` ve `remove` birlikte düşerse) | **Açık, kapatılamaz.** Dizine ne yazılabiliyor ne silinebiliyorsa "silindi" işareti de yazılamaz; kalıcı bir tombstone aynı başarısız yazıma muhtaç. Süreç içinde davranış doğru (bellek kapanır, uyarı çıkar); yalnız sonraki süreçte eski geniş kayıt dirilir. Uygulamanın kendi konteynerinde gerçekçi değil (§7'de zaten vardı). |
+| 3 | `Dispatcher` iç uyarıları `logger`'a bağlı değil | **Düzeltildi.** `Dispatcher.init(log:)` (varsayılan `nil`), Core `Configuration.logger`'ı `[cizeylem]` önekiyle geçirir. Üç veri kaybı yolunda bir satır yazar: okunamayan satır silindi, sunucu 400 ile reddetti, tek event 413. 401/403 uyarısı Core'da zaten vardı (çift yazılmaz). Test: `testOkunamayanSatirSilinirkenLoggerYazar`. |
+| 4 | Yaşam döngüsü okunamazlığı `stats()`'ta görünmüyor | **Açık.** `LifecycleObserver.launch` içinde `.unreadable` sessizce dönüyor (karar verilmez, üzerine yazılmaz; bu bilerek). Görünür kılmak `Stats`'a genel bir alan eklemek (public API değişikliği) ve statik `launch`'tan Core'a bir geri bildirim yolu demek; 1.0 öncesi API kararı olduğundan bu görevde alınmadı. Etki: okunamayan durumda `cz_app_installed/updated` üretilmez, kullanıcı tarafında yalnız eksik sayım. |
+| 5 | `beginBackgroundTask`: arka plan flush'ı yarım kalabilir | **Açık.** `cz_app_backgrounded` sonrası flush ağda iken sistem süreci askıya alabilir; kuyruk diskte durduğundan event kaybolmaz, sonraki açılışta gider (en kötü ihtimalle gecikir). `UIApplication.beginBackgroundTask` eklemek kalem 6'daki extension sorununu büyütür (aynı `UIApplication.shared` bağımlılığı) ve gerçek cihazda doğrulanamıyor (§6). Gerçek cihaz denemesinde ölçülüp karar verilmeli. |
+| 6 | App extension uyumu | **Açık, gerçek risk (kanıtlandı).** `Sources/Cizeylem/Cizeylem.swift:41` `UIApplication.shared.applicationState` kullanır. Yeniden üretim: `xcrun --sdk iphonesimulator swiftc -typecheck -application-extension -target arm64-apple-ios15.0-simulator -package-name cz -module-name Cizeylem Sources/Cizeylem/*.swift Sources/Cizeylem/Internal/*.swift -swift-version 6` → `'shared' is unavailable in application extensions for iOS`. Yani `Cizeylem` bir app extension hedefine bağlanırsa (Share/Widget/Notification Service) **derlenmez**. Sürüm notunda ve entegrasyon belgesinde "extension desteklenmez" yazılmalı. Düzeltme (başlangıç durumunu `UIApplication` yerine bildirim sırasından okumak ya da extension'da koşulsuz `startsActive=false`) davranış değişikliği olduğundan ve extension'da `LifecycleObserver`'ın anlamı belirsiz olduğundan bu görevde yapılmadı. Ayrıca extension ayrı konteyner kullandığı için `Library/Caches` altındaki kuyruk ana uygulamayla paylaşılmaz (§7 / ledger "süreçler arası kilit" kararı). |
+| 7 | Privacy manifest `.copy` vs `.process` | **Düzeltildi (kısmen doğrulandı).** `Package.swift` iki hedefte de `.process` kullanıyor (Apple'ın belgelediği biçim). Doğrulandı: iOS ve tvOS simülatör derlemesinde `Cizeylem_Cizeylem.bundle/PrivacyInfo.xcprivacy` kaynağıyla **bayt bayt aynı**; testler geçti. **Doğrulanmadı:** Xcode'un "Generate Privacy Report" ve App Store doğrulamasının bu bundle'ı nasıl okuduğu (arayüz gerekir; RELEASE.md kontrol listesinde elle adım). Arşiv bu görevde yeniden alınmadı. |
+| 8 | `PropValue`/`EventJSON.sanitize` tekrarı ve derinlik sınırı | **Derinlik sınırı düzeltildi, tekrar açık.** `PropValue.from` artık 32 düzeyde keser (aşan alt ağaç `null`); sınırsız özyineleme ev sahibi yığınını taşırıp süreci çökertebilirdi. Test: 2000 düzeyli yapı çökmez, tam `maxDepth+1` düzey korunur; sınır altı yapı aynen kalır. `EventJSON.sanitize` hâlâ ayrı bir kopya ve **derinlik sınırı yok**: üretim yolunda her zaman `PropValue.json`'dan geçen değer alır (zaten sınırlı), yalnız doğrudan çağrılırsa sınırsız. İki mantığı birleştirmek test ağırlıklı bir refaktör; tel biçiminin tek yazarı `EventJSON` kaldığı için risk düşük, ertelendi. Sınırı aşan değerin sessizce `null` olması bilinçli ve belgeli. |
+
+**CI'nın kanıtlamadıkları:** workflow GitHub'da koşmadı; `macos-26` imajı/Xcode sürümü, runner'da tvOS
+indirme süresi, iOS 15 çalışma zamanı, gerçek cihaz. Test sayısı kapısı "kaybolmadı"yı kanıtlar, "doğru"yu değil.

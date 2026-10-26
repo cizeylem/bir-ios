@@ -312,3 +312,22 @@ final class EventJSONTests: XCTestCase {
         XCTAssertEqual(events.map { $0["event"] as? String }, (0..<20).map { "e\($0)" })
     }
 }
+
+final class PropValueDepthTests: XCTestCase {
+    func testCokDerinIcIceYapiCokmezVeSinirdaKesilir() {
+        var nested: Any = "yaprak"
+        for _ in 0..<2_000 { nested = ["k": nested] as [String: Any] }
+        let v = PropValue.from(nested)
+        // Sınır içindeki ağaç korunur; sınırı aşan alt ağaç null olur ve yığın taşmaz.
+        var depth = 0
+        var cur = v
+        while case .map(let m) = cur, let next = m["k"] { depth += 1; cur = next }
+        XCTAssertEqual(depth, PropValue.maxDepth + 1)
+        XCTAssertEqual(cur, .null)
+    }
+
+    func testSinirinAltindakiYapiAynenKorunur() {
+        let v = PropValue.from(["a": ["b": [1, 2, ["c": "x"]]]] as [String: Any])
+        XCTAssertEqual(v, .map(["a": .map(["b": .list([.int(1), .int(2), .map(["c": .string("x")])])])]))
+    }
+}

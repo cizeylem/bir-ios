@@ -495,6 +495,21 @@ final class DispatcherTests: XCTestCase {
         XCTAssertEqual(sk, 4)
     }
 
+    func testOkunamayanSatirSilinirkenLoggerYazar() async {
+        final class Box: @unchecked Sendable {
+            let lock = NSLock(); var lines: [String] = []
+            func add(_ s: String) { lock.lock(); lines.append(s); lock.unlock() }
+            var all: [String] { lock.lock(); defer { lock.unlock() }; return lines }
+        }
+        let box = Box()
+        let q = EventQueue(directory: dir, maxEvents: 5000, maxBytes: 200_000_000)
+        for l in ["çöp", "{\"yarim\":"] { q.append(l) }
+        let d = Dispatcher(queue: q, transport: FakeNet(), now: Clock().seconds, random: { 1 }, log: { box.add($0) })
+        await d.drain()
+        XCTAssertEqual(box.all.count, 1)
+        XCTAssertTrue(box.all.first?.contains("2 satır") ?? false, "kayıp sessiz değil: \(box.all)")
+    }
+
     func testBozukSatirGecerlilerleKarisikGidiyorBozukOlanSkippedeSayilir() async {
         let net = FakeNet()
         let d = make([line(1), "çöp", line(2)], net: net, clock: Clock())

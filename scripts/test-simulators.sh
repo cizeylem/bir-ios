@@ -74,7 +74,18 @@ run_family() {
   if xcodebuild test -scheme Cizeylem-Package -destination "id=$udid" \
        -skipPackagePluginValidation 2>&1 | tee "$log" | grep -E "^[[:space:]]*(Test Suite 'All tests'|\*\* TEST|Executed )" ; then :; fi
   if grep -q "\*\* TEST SUCCEEDED \*\*" "$log"; then
-    eval "$var=\"GECTI ($family $rtname, $dname)\""
+    # Geçti demek yetmez: sessizce atlanan test sınıfı da "geçer". Sayı alt sınırın altındaysa düşer.
+    # UIKit dalları yalnız simülatörde derlenir; macOS'taki uyarı kapısı onları görmez.
+    if grep -E '\.swift:[0-9]+:[0-9]+: warning:' "$log"; then
+      eval "$var=\"BASARISIZ (derleyici uyarısı var; $family $rtname, $dname); tam çıktı: $log\""
+      return
+    fi
+    local floor_key; floor_key="$(printf '%s' "$family" | tr '[:lower:]' '[:upper:]')"
+    if ./scripts/check-test-count.sh "$floor_key" "$log"; then
+      eval "$var=\"GECTI ($family $rtname, $dname)\""
+    else
+      eval "$var=\"BASARISIZ (test sayısı kapısı; $family $rtname, $dname); tam çıktı: $log\""
+    fi
   else
     eval "$var=\"BASARISIZ ($family $rtname, $dname); tam çıktı: $log\""
   fi

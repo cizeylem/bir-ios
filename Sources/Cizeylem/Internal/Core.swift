@@ -19,12 +19,18 @@ enum PropValue: Sendable, Equatable {
     indirect case list([PropValue])
     indirect case map([String: PropValue])
 
-    static func from(_ value: Any?) -> PropValue {
+    /// İç içe geçme sınırı: sınırsız özyineleme, ev sahibinin verdiği çok derin bir yapıda yığını
+    /// taşırıp süreci çökertirdi. Sınırı aşan alt ağaç `null` olur (kayıp, `logger` ile bildirilmez:
+    /// bu katman saf bir dönüşüm, günlük yok).
+    static let maxDepth = 32
+
+    static func from(_ value: Any?, depth: Int = 0) -> PropValue {
         guard let value else { return .null }
+        guard depth <= maxDepth else { return .null }
         // Optional açık açılır: açılmayan `.some(x)` default dalda "Optional(x)" metnine dönerdi.
         if Mirror(reflecting: value).displayStyle == .optional {
             guard let wrapped = Mirror(reflecting: value).children.first?.value else { return .null }
-            return from(wrapped)
+            return from(wrapped, depth: depth)
         }
         switch value {
         case is NSNull:
@@ -38,9 +44,9 @@ enum PropValue: Sendable, Equatable {
             guard n.doubleValue.isFinite else { return .null }   // JSON'da NaN/Infinity yok
             return CFNumberIsFloatType(n) ? .double(n.doubleValue) : .int(n.int64Value)
         case let d as [String: Any?]:
-            return .map(d.mapValues { from($0) })
+            return .map(d.mapValues { from($0, depth: depth + 1) })
         case let a as [Any?]:
-            return .list(a.map { from($0) })
+            return .list(a.map { from($0, depth: depth + 1) })
         case let d as Date:
             // Protokoldeki `time` ile aynı birim (epoch ms). Aralık dışı tarih metne düşer:
             // `Int64(Double)` taşmada trap eder ve ev sahibini çökertirdi.
@@ -350,7 +356,8 @@ actor Core {
             directory: deps.platform.queueDirectory,
             maxEvents: deps.platform.maxEvents, maxBytes: deps.platform.maxBytes)
         dispatcher = Dispatcher(
-            queue: queue, transport: deps.makeTransport(config), now: deps.now, random: deps.random)
+            queue: queue, transport: deps.makeTransport(config), now: deps.now, random: deps.random,
+            log: dispatcherLog())
         session = SessionStore(
             url: deps.platform.queueDirectory.appendingPathComponent("session"), now: deps.now)
         startLifecycle()
@@ -820,6 +827,12 @@ actor Core {
         let ms = seconds * 1000
         guard ms.isFinite, abs(ms) < 9.0e18 else { return 0 }
         return Int64(ms)
+    }
+
+    /// Dispatcher'ın tanılama satırları `Configuration.logger`'a aynı önekle gider.
+    private func dispatcherLog() -> (@Sendable (String) -> Void)? {
+        guard let logger = config.logger else { return nil }
+        return { @Sendable message in logger("[cizeylem] " + message) }
     }
 
     private func warn(_ message: String) {

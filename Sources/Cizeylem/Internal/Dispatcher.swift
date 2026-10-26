@@ -34,6 +34,9 @@ actor Dispatcher {
     private let transport: BatchSending
     private let now: @Sendable () -> Double
     private let random: @Sendable () -> Double
+    /// Tanılama kanalı (`Configuration.logger`). Sayaçlar `stats()`'ta görünür ama sayaç tek başına
+    /// "ne zaman, neden" demez; veri kaybı olan iki yolda (okunamayan satır, sunucu reddi) bir satır yazılır.
+    private let log: (@Sendable (String) -> Void)?
 
     private var disabled = false
     private var rejected = 0
@@ -47,8 +50,10 @@ actor Dispatcher {
         queue: EventQueue,
         transport: BatchSending,
         now: @escaping @Sendable () -> Double,
-        random: @escaping @Sendable () -> Double
+        random: @escaping @Sendable () -> Double,
+        log: (@Sendable (String) -> Void)? = nil
     ) {
+        self.log = log
         self.queue = queue
         self.transport = transport
         self.now = now
@@ -103,6 +108,7 @@ actor Dispatcher {
             // Hepsi bozuksa boş gövde göndermek anlamsız, satırları bırakmak ise poison message:
             // gönderim o satırda sonsuza dek tıkanır. Ağa çıkılmadığı için backoff'a dokunulmaz.
             if skipped >= batch.count {
+                log?("okunamayan \(batch.count) satır kuyruktan silindi (gönderilmedi)")
                 skippedLines += batch.count
                 queue.removeFirst(batch.count)
                 continue
@@ -125,6 +131,7 @@ actor Dispatcher {
             case .split:
                 if batch.count == 1 {
                     // Tek event bile sığmıyor: sonsuz döngüye girmemek için düşür.
+                    log?("sunucu tek event'i bile kabul etmedi (413): \(remaining) event atıldı")
                     rejected += remaining
                     queue.removeFirst(remaining)
                 } else {
@@ -133,11 +140,14 @@ actor Dispatcher {
             case .drop:
                 // Bozuk satır sunucuya hiç gitmedi: reddi sunucunun saymak yanlış olur.
                 let unreadable = min(skipped, remaining)
+                if remaining > unreadable { log?("sunucu \(remaining - unreadable) event'i kalıcı reddetti (400): atıldı") }
+                if unreadable > 0 { log?("okunamayan \(unreadable) satır kuyruktan silindi (gönderilmedi)") }
                 skippedLines += unreadable
                 rejected += remaining - unreadable
                 queue.removeFirst(remaining)
                 resetBackoff()
             case .ok:
+                if skipped > 0 { log?("okunamayan \(min(skipped, remaining)) satır kuyruktan silindi (gönderilmedi)") }
                 skippedLines += min(skipped, remaining)
                 queue.removeFirst(remaining)
                 resetBackoff()

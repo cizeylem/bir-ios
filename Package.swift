@@ -12,15 +12,15 @@ let package = Package(
     targets: [
         .target(
             name: "Cizeylem",
-            // Privacy Manifest hedef kaynağı olarak bildirilir (SPEC §7). `.copy`: dosya
-            // olduğu gibi pakete girer, Xcode onu işleyip bozmaz.
-            resources: [.copy("Resources/PrivacyInfo.xcprivacy")]
+            // Privacy Manifest hedef kaynağı olarak bildirilir (SPEC §7). `.process`: Apple'ın
+            // belgelediği ve gizlilik raporu/App Store doğrulamasının beklediği biçim.
+            resources: [.process("Resources/PrivacyInfo.xcprivacy")]
         ),
         .target(
             name: "CizeylemAttribution",
             dependencies: ["Cizeylem"],
             // Attribution'ın kendi Privacy Manifest'i: IDFA beyanı çekirdekte değil burada durur.
-            resources: [.copy("Resources/PrivacyInfo.xcprivacy")]
+            resources: [.process("Resources/PrivacyInfo.xcprivacy")]
         ),
         .testTarget(name: "CizeylemTests", dependencies: ["Cizeylem"]),
         .testTarget(name: "CizeylemAttributionTests", dependencies: ["CizeylemAttribution", "Cizeylem"]),
