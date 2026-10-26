@@ -416,12 +416,52 @@ final class CizeylemTests: XCTestCase {
         XCTAssertNotNil(UUID(uuidString: yeni ?? ""), "taze anonim kimlik UUID'dir")
 
         let evs = await net.events
-        let sonrakiler = evs.drop { $0.name != "yeniden" && $0.distinctId == "amplitude-id" }
         XCTAssertEqual(evs.filter { !$0.setOnce.isEmpty && $0.distinctId == yeni }.count, 0,
                        "(b) `migrated_from` ikinci kez gitmez")
         XCTAssertEqual(evs.filter { $0.name == "cz_app_installed" && $0.distinctId == yeni }.count, 0,
                        "(c) aynı/yeni kimliğe ikinci `cz_app_installed` yazılmaz")
-        XCTAssertEqual(sonrakiler.filter { $0.name == "yeniden" }.count, 1)
+        XCTAssertEqual(evs.filter { $0.name == "yeniden" }.count, 1)
+        await c.shutdown()
+    }
+
+    func testVeriYokkenSavunmaAmacliGeriAlmaDevralmayiCEZALANDIRMAZ() async {
+        // Important 3: hiç veri toplanmamışken unutulacak bir şey de yoktur. Taze kurulumda
+        // savunma amaçlı `setOptOut(true)`, hiç başlamamış bir Amplitude devralmasını
+        // kalıcı olarak iptal etmemeli.
+        let net = Net()
+        var d = deps(net)
+        d.takeoverOverride = Takeover(deviceId: "amplitude-id", source: "amplitude-swift", optOut: false)
+        let c = Core(config: Configuration(writeKey: "ck_w_test", legacyAmplitude: true), deps: d)
+
+        await c.start()                                  // taze kurulum, rıza yok
+        await c.setOptOut(true)                          // savunma amaçlı geri alma
+        await c.setConsent(Consent(analytics: true))     // kullanıcı ayarlardan açıyor
+
+        let id = await c.distinctId()
+        XCTAssertEqual(id, "amplitude-id", "devralma koşar: unutulacak bir şey yoktu")
+        await c.track("e")
+        await c.flush()
+        let evs = await net.events.filter { $0.name == "e" }
+        XCTAssertEqual(evs[0].setOnce["migrated_from"], "amplitude-swift")
+        await c.shutdown()
+    }
+
+    func testVeriYokkenGeriAlmaAcikConfigurationDeviceIdiniYOKSAYMAZ() async {
+        let net = Net()
+        let cfg = Configuration(writeKey: "ck_w_test", deviceId: "host-verdi", legacyAmplitude: false)
+        let c = Core(config: cfg, deps: deps(net))
+
+        await c.start()
+        await c.setConsent(Consent())
+        await c.setConsent(Consent(analytics: true))
+
+        let id = await c.distinctId()
+        XCTAssertEqual(id, "host-verdi", "geliştiricinin açıkça verdiği kimlik sessizce yok sayılmaz")
+        await c.track("e")
+        await c.flush()
+        let evs = await net.events.filter { $0.name == "e" }
+        XCTAssertEqual(evs[0].setOnce["migrated_from"], "configured")
+        XCTAssertEqual(evs[0].distinctId, "host-verdi")
         await c.shutdown()
     }
 
@@ -479,10 +519,46 @@ final class CizeylemTests: XCTestCase {
 
         XCTAssertTrue(logged.contains("geri alma sonrası taze kimlik yazılamadı"),
                       "yazılamayan taze kimlik sessizce benimsenmez")
+        // `stats()` `distinctId()`'den ÖNCE sorulur: sorgu `ensureDeviceId()`'i çalıştırıp
+        // bayrağı kendisi kurardı ve assert ayırt edici olmazdı.
+        let st = await c.stats()
+        XCTAssertFalse(st.deviceIdAvailable, "durum ilk sorguyu beklemeden stats()'ta görünür")
         let id = await c.distinctId()
         XCTAssertNil(id, "diske yazılamayan kimlik kullanılmaz")
-        XCTAssertFalse(logged.contains("migrated_from"))
         await c.shutdown()
+    }
+
+    func testRizaOkunamazkenDiskteVeriVarsaGeriAlmaDevralmayiYineKAPATIR() async {
+        // `erase()`'in koşulundaki ikinci şart: önceki rıza (okuma hatası yüzünden) kapalı
+        // görünse bile diskte KENDİ kimliğimiz varsa unutulacak bir şey VARDIR.
+        let net = Net()
+        var d = deps(net)
+        d.takeoverOverride = Takeover(deviceId: "amplitude-id", source: "amplitude-swift", optOut: false)
+        let cfg = Configuration(writeKey: "ck_w_test", legacyAmplitude: true)
+
+        let c1 = Core(config: cfg, deps: d)
+        await grant(c1)
+        await c1.track("eski")
+        let ilk = await c1.distinctId()
+        XCTAssertEqual(ilk, "amplitude-id")
+        await c1.shutdown()
+
+        // İkinci süreç: rıza dosyası okunamıyor → bellekte kapalı; ama device_id diskte duruyor.
+        var d2 = d
+        d2.consentReadFile = { _ in throw NSError(domain: NSPOSIXErrorDomain, code: Int(EPERM)) }
+        let c2 = Core(config: cfg, deps: d2)
+        await c2.start()
+        await c2.setConsent(Consent())                 // açık geri alma
+        await c2.setConsent(Consent(analytics: true))  // yeniden verildi
+
+        let yeni = await c2.distinctId()
+        XCTAssertNotNil(yeni)
+        XCTAssertNotEqual(yeni, "amplitude-id", "silinen kimlik Amplitude'dan geri gelmez")
+        await c2.track("yeni")
+        await c2.flush()
+        let evs = await net.events.filter { $0.name == "yeni" }
+        XCTAssertEqual(evs[0].setOnce, [:], "`migrated_from` ikinci kez gitmez")
+        await c2.shutdown()
     }
 
     func testKimlikYokkenIdentifyUserIdBaginiKOPARMAZ() async {

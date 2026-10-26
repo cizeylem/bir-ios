@@ -258,6 +258,9 @@ actor Core {
     /// **kalıcı yazarız** ve sonraki süreçler kendi depomuzu gördüğü için devralma bir daha hiç
     /// tetiklenmez — düzeltme kalıcı olur, bayrak yalnız aradaki boşluğu kapatır.
     ///
+    /// Bayrak yalnız **silinecek bir şey varken** kurulur (bkz. `erase`): hiç veri
+    /// toplanmamışken unutulacak bir şey de yoktur.
+    ///
     /// **Kalan açık:** süreç, `erase()` ile rızanın yeniden verilmesi arasında ölürse bayrak
     /// kaybolur ve devralma bir kez daha koşar. Kalıcı iz bırakmadan kapatılamıyor.
     private var erasedInProcess = false
@@ -336,7 +339,7 @@ actor Core {
         // Aynı süreçte sildiysek uygulama yeniden KURULMADI; durumu önceden yazarız ki gözlemci
         // "ilk açılış" sanıp ikinci bir `cz_app_installed` üretmesin (kurulum metriği şişmesin).
         // Bu yazım rıza geri verildikten SONRA olur, yani rızasız iz bırakma kuralını bozmaz.
-        if erasedInProcess { seedLifecycleState() }
+        if erasedInProcess { await seedLifecycleState() }
         userId = identityStore.read()
         let queue = EventQueue(
             directory: deps.platform.queueDirectory,
@@ -390,9 +393,13 @@ actor Core {
         let fresh = deps.uuid()
         deviceIdStore.write(fresh)
         guard deviceIdStore.read() == fresh else {
-            // Yazılamadı: bayrak duruyor, bir sonraki `enable()` yeniden dener. Devralmaya
-            // DÖNÜLMEZ — yazamamak, silinmiş kimliği geri getirmek için gerekçe değildir.
-            warn("geri alma sonrası taze kimlik yazılamadı; sonraki denemede tekrarlanacak")
+            // Yazılamadı. Bayrak duruyor, yani devralmaya DÖNÜLMEZ — yazamamak, silinmiş
+            // kimliği geri getirmek için gerekçe değildir. Kurtarma `enable()`'dan değil
+            // `ensureDeviceId()`'den gelir: ilk event denemesinde `getOrCreate()` yeniden dener.
+            // Durum madde 2'deki yolla görünür olsun diye şimdi işaretlenir, yoksa ilk
+            // sorguya kadar `stats()` iyimser kalırdı.
+            deviceIdUnavailable = true
+            warn("geri alma sonrası taze kimlik yazılamadı; ilk event denemesinde tekrarlanacak")
             return
         }
         deviceId = fresh
@@ -418,10 +425,14 @@ actor Core {
     }
 
     /// Yaşam döngüsü durumunu "bu sürüm zaten kurulu" diye işaretler.
-    private func seedLifecycleState() {
+    private func seedLifecycleState() async {
         let store = LifecycleStateStore(
             url: location.url, usesDefaults: location.usesDefaults, defaultsSuite: deps.defaultsSuite)
-        _ = store.save(LifecycleSnapshot(version: deps.app.version, build: deps.app.build))
+        let snapshot = LifecycleSnapshot(version: deps.app.version, build: deps.app.build)
+        guard !store.save(snapshot) else { return }
+        // Yazım düştüyse `launch()` kaydı `.absent` görür ve yine ikinci bir `cz_app_installed`
+        // üretirdi. Süreç belleği bu yolu da kapatır (`LifecycleObserver.record()` ile aynı kalıp).
+        await UnpersistedLifecycle.shared.set(store.key, snapshot)
     }
 
     private func startLifecycle() {
@@ -485,6 +496,7 @@ actor Core {
     /// yok ederdi.
     func setConsent(_ next: Consent) async {
         if !started { started = true }
+        let previous = consent
         // Bellekteki rıza her durumda güncellenir: diske yazılamasa bile bu süreçte host'un
         // iradesi geçerlidir (daraltmada daha kısıtlayıcı, genişletmede host zaten istiyor).
         consent = next
@@ -497,8 +509,9 @@ actor Core {
             await enable()
         } else {
             // Önceki rıza da kapalı olsa silinir: bu AÇIK bir "rıza yok" beyanıdır ve bir okuma
-            // hatasından sonra kalmış olabilecek kayıtları da götürmesi gerekir.
-            erase()
+            // hatasından sonra kalmış olabilecek kayıtları da götürmesi gerekir. `previous`
+            // yalnız "unutulacak bir şey var mıydı" sorusu için taşınır (bkz. `erase`).
+            erase(previouslyAllowedWrite: previous.allowsWrite)
         }
     }
 
@@ -512,9 +525,18 @@ actor Core {
     }
 
     /// Rızasız kullanıcıda bizden iz kalmaz: kuyruk, kimlik, oturum ve yaşam döngüsü durumu silinir.
-    private func erase() {
+    ///
+    /// - Parameter previouslyAllowedWrite: Bu çağrıdan hemen öncesinde rıza yazmaya izin
+    ///   veriyor muydu.
+    private func erase(previouslyAllowedWrite: Bool) {
+        // "Devralmayı bir daha koşturma" bayrağı yalnız SİLİNECEK BİR ŞEY varken kurulur.
+        // İlke: hiç veri toplanmamışken unutulacak bir şey de yoktur. Taze kurulumda host'un
+        // savunma amaçlı `setOptOut(true)` çağrısı (desteklenen bir kalıp), hiç başlamamış bir
+        // Amplitude devralmasını ya da geliştiricinin açıkça verdiği `Configuration(deviceId:)`
+        // değerini KALICI olarak iptal etmemeli — bu, madde 4'ün ve devralma işinin amacını
+        // boşa çıkarırdı. Kontrol silmeden ÖNCE yapılır.
+        if previouslyAllowedWrite || deviceIdStore.read() != nil { erasedInProcess = true }
         shutdown()
-        erasedInProcess = true
         deviceId = nil
         userId = nil
         pending = Pending()

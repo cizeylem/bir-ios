@@ -87,7 +87,10 @@ struct LifecycleStateStore: Sendable {
 /// Neden: durum yazılamazsa her gözlemci "ilk açılış" görür ve `cz_app_installed` (kurulum sayısı)
 /// şişer; Android'de tam bu oldu. Yalnız yazma BAŞARISIZ olduğunda dolar, başarılı yazımda silinir; bu
 /// yüzden diskteki gerçek durumu hiçbir zaman gölgelemez.
-private actor UnpersistedLifecycle {
+///
+/// Modül içi görünür: `Core` geri alma sonrası durumu tohumlarken yazım düşerse aynı belleği
+/// kullanır (aksi halde ikinci bir `cz_app_installed` üretilirdi).
+actor UnpersistedLifecycle {
     static let shared = UnpersistedLifecycle()
     private var entries: [String: LifecycleSnapshot] = [:]
 
