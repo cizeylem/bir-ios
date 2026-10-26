@@ -78,7 +78,7 @@ final class ConsentStoreTests: XCTestCase {
         }
     }
 
-    func testYazimDosyayaAtomikYapilir() throws {
+    func testYazimYanDosyaBirakmaz() throws {
         XCTAssertTrue(store().write(all))
         let names = try FileManager.default.contentsOfDirectory(atPath: dir.path)
         XCTAssertEqual(names, ["consent"], "geçici/yan dosya kalmamalı")
@@ -270,6 +270,13 @@ final class ConsentStoreTests: XCTestCase {
             for _ in 0..<3 { _ = store().read(); _ = store().allowsWrite() }
             XCTAssertEqual(snapshot(), before, raw)
         }
+    }
+
+    /// `hasSuffix("\n")` koruması yalnız `dropLast` ile birlikte anlamlı: son satır sonu
+    /// olmadan üç geçerli satır, kayıt yarım yazılmış olabileceği için kapalı okunmalı.
+    func testSonSatirSonuYoksaKapaliOkunur() throws {
+        try put("analytics=true\nattribution=true\nadSharing=true")
+        XCTAssertEqual(store().read(), off)
     }
 
     func testReadBozukKayitTemizlemezVeDuzeltmez() throws {
