@@ -120,8 +120,13 @@ enum EventJSON {
             return a.map { sanitize($0 as Any) }
         case let d as Date:
             // Protokoldeki `time` ile aynı birim (epoch ms).
+            // `Int64(Double)` taşmada trap eder ve ev sahibi uygulamayı çökertir; `isFinite` taşmayı elemez
+            // (1e300 sonlu). `Int64(exactly:)` NaN, sonsuz ve aralık dışında `nil` verir; `Double(Int64.max)`
+            // yuvarlamayla 2^63'e çıktığı için `<= Double(Int64.max)` karşılaştırması ise güvenli değildir.
+            // Aralık dışı kalan tarih, diğer bilinmeyen tipler gibi metin olarak yazılır (`null` veri kaybı olurdu).
             let ms = (d.timeIntervalSince1970 * 1000).rounded()
-            return ms.isFinite ? Int64(ms) : NSNull()
+            if let exact = Int64(exactly: ms) { return exact }
+            return String(describing: d)
         case let u as URL:
             return u.absoluteString
         default:

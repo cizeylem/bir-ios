@@ -137,9 +137,39 @@ final class EventJSONTests: XCTestCase {
         XCTAssertEqual((o["props"] as? [String: Any])?["d"] as? Int, 1001)
     }
 
-    func testDateSonsuzsaNullOlur() throws {
-        let o = try decode(event(props: ["d": Date(timeIntervalSince1970: .infinity)]))
-        XCTAssertTrue((o["props"] as? [String: Any])?["d"] is NSNull)
+    func testDateAralikDisiCokmezMetinOlur() throws {
+        // Taşan Int64 dönüşümü trap ederdi; test sürecin çökmeden bitmesiyle de kanıtlar.
+        let dates = [1e300, -1e300, .infinity, -.infinity, .nan, 9.3e15, -9.3e15, 9.223372036854776e15]
+        for ts in dates {
+            let d = Date(timeIntervalSince1970: ts)
+            let o = try decode(event(props: ["d": d]))
+            let v = (o["props"] as? [String: Any])?["d"]
+            XCTAssertEqual(v as? String, String(describing: d), "ts=\(ts)")
+        }
+    }
+
+    func testDateDistantFutureVePastSayiOlarakYazilir() throws {
+        let o = try decode(event(props: ["f": Date.distantFuture, "p": Date.distantPast]))
+        let props = try XCTUnwrap(o["props"] as? [String: Any])
+        XCTAssertEqual((props["f"] as? NSNumber)?.int64Value, 64_092_211_200_000)
+        XCTAssertEqual((props["p"] as? NSNumber)?.int64Value, -62_135_769_600_000)
+    }
+
+    func testDateTamInt64MinSayiOlarakYazilir() throws {
+        // -2^63 ms tam Int64.min: sığar, alt sınır dahil.
+        let d = Date(timeIntervalSince1970: -9.223372036854776e15)
+        let o = try decode(event(props: ["d": d]))
+        XCTAssertEqual((o["props"] as? [String: Any])?["d"] as? Int64, Int64.min)
+    }
+
+    func testDateInt64SinirinaYakinSayiOlurTasarsaMetin() throws {
+        // 9.2e15 sn = 9.2e18 ms < 2^63: sayı. 9.223372036854776e15 sn -> ms = 2^63 tam (taşar): metin.
+        let near = Date(timeIntervalSince1970: 9.2e15)
+        let o = try decode(event(props: ["n": near]))
+        XCTAssertEqual((o["props"] as? [String: Any])?["n"] as? Int64, 9_200_000_000_000_000_000)
+        let neg = Date(timeIntervalSince1970: -9.2e15)
+        let o2 = try decode(event(props: ["n": neg]))
+        XCTAssertEqual((o2["props"] as? [String: Any])?["n"] as? Int64, -9_200_000_000_000_000_000)
     }
 
     func testURLAbsoluteStringOlur() throws {
