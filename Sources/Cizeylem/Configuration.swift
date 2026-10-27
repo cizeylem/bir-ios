@@ -16,6 +16,14 @@ public struct Configuration: Sendable {
     public let flushInterval: TimeInterval
     /// Amplitude `device_id` devralmasını (salt okuma) aç/kapa.
     public let legacyAmplitude: Bool
+    /// **Amplitude'un** API anahtarı; Çizeylem'in write key'i (`writeKey`) DEĞİLDİR.
+    ///
+    /// Amplitude-Swift, kimliğini adı bu anahtarı içeren bir `UserDefaults` suite'inde tutar
+    /// (`com.amplitude.storage.amplitude-swift-storage-<anahtar>-<instance>`); devralma o suite'i
+    /// ancak bu anahtarla bulabilir. Verilmezse (`nil` ya da boş) Amplitude-Swift suite'i HİÇ
+    /// taranmaz; eski ObjC SQLite yolu anahtara ihtiyaç duymadığından yine denenir.
+    /// `legacyAmplitude == false` ise bu alan da kullanılmaz.
+    public let legacyAmplitudeApiKey: String?
     /// SDK uyarıları buraya gider. `nil` ise uyarı yutulur: bir SDK ev sahibinin konsolunu
     /// izinsiz kirletmez (`print` yok).
     ///
@@ -29,6 +37,7 @@ public struct Configuration: Sendable {
         flushAt: Int? = nil,
         flushInterval: TimeInterval = 30,
         legacyAmplitude: Bool = true,
+        legacyAmplitudeApiKey: String? = nil,
         logger: (@Sendable (String) -> Void)? = nil
     ) {
         self.writeKey = writeKey
@@ -37,6 +46,7 @@ public struct Configuration: Sendable {
         self.flushAt = flushAt
         self.flushInterval = flushInterval
         self.legacyAmplitude = legacyAmplitude
+        self.legacyAmplitudeApiKey = legacyAmplitudeApiKey
         self.logger = logger
     }
 

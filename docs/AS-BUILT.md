@@ -91,7 +91,12 @@ hiçbir şey çalıştırılmadı; Amplitude-Swift v1.19.3, Amplitude-iOS 8.22.2
   sıfır-UUID, `02:00:00:00:00:00`, `020000000000`. ("sonu S ile biten" kuralı iOS'ta yok.)
 - **Kanıtlanmayan kalanlar:** host uygulamanın gömdüğü gerçek Amplitude sürümü bilinmiyor; suite plist'inin disk yolu
   (`Library/Preferences/<suite>.plist`) Apple davranışı, bu işte **doğrulanmadı**; eski Swift sürümlerinin
-  (≤ 1.9) suite biçimleri tag bazında doğrulanmadı; gerçek bir Amplitude yüklü cihazda devralma **hiç denenmedi**.
+  (≤ 1.9) suite biçimleri tag bazında doğrulanmadı; gerçek bir Amplitude yüklü cihazda devralma **denendi** (2026-10-27, host uygulama iPhone 11): plist yolu
+  `Library/Preferences/com.amplitude.storage.amplitude-swift-storage-<amplitudeApiKey>-$default_instance.plist`
+  doğrulandı, içinde `device_id` var. Deneme bir **hata** buldu: `Core` suite adını Çizeylem'in write key'iyle
+  kuruyordu, yani Amplitude-Swift devralması hiç çalışmamıştı (sessiz hata). Düzeltildi (0.2.0):
+  `Configuration.legacyAmplitudeApiKey` (**Amplitude'un** API anahtarı, write key değil; `nil` ise
+  Amplitude-Swift suite'i taranmaz, ObjC SQLite yolu yine denenir).
 
 ## 5. Dağıtım tabanı: iOS 15 / tvOS 15 / macOS 12
 

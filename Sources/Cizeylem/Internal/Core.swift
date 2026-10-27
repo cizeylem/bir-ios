@@ -390,10 +390,10 @@ actor Core {
             found = override
         } else if let dir = deps.amplitudeLibraryDirectory {
             found = AmplitudeTakeover.find(
-                apiKey: config.writeKey, configured: nil, instance: "",
+                apiKey: config.legacyAmplitudeApiKey, configured: nil, instance: "",
                 ownStore: deviceIdStore, libraryDirectory: dir)
         } else {
-            found = AmplitudeTakeover.find(apiKey: config.writeKey, configured: nil)
+            found = AmplitudeTakeover.find(apiKey: config.legacyAmplitudeApiKey, configured: nil)
         }
         guard let found else { return }
         apply(found)

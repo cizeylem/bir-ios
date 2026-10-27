@@ -30,10 +30,14 @@ enum AmplitudeTakeover {
         "020000000000",
     ]
 
+    /// `apiKey` **Amplitude'un** API anahtarıdır (Çizeylem write key'i değil); `nil`/boş ise
+    /// Amplitude-Swift suite'i taranmaz. `String?` alır (çağıranda boş dizgiye düşürmek yerine):
+    /// "anahtar yok" durumu tipte görünür kalır ve sahte suite adı hiç kurulmaz.
+    ///
     /// Sıra: configured, kendi depomuz, Amplitude-Swift suite'i, eski ObjC SQLite. Kendi depomuzda
     /// kimlik varsa `nil` döner: devralınacak bir şey yok ve `migrated_from` yeniden tetiklenmemeli
     /// (çağıran `getOrCreate()` ile mevcut kimliği okur).
-    static func find(apiKey: String, configured: String?) -> Takeover? {
+    static func find(apiKey: String?, configured: String?) -> Takeover? {
         find(
             apiKey: apiKey, configured: configured, instance: "",
             ownStore: DeviceIdStore(platform: .current, vendorHash: nil, uuid: { "" }),
@@ -41,7 +45,7 @@ enum AmplitudeTakeover {
     }
 
     static func find(
-        apiKey: String, configured: String?, instance: String,
+        apiKey: String?, configured: String?, instance: String,
         ownStore: DeviceIdStore, libraryDirectory: URL
     ) -> Takeover? {
         // Açık değer geliştiricinin bilinçli seçimi: yalnız boşluk/boş ise yok sayılır, liste uygulanmaz.
@@ -85,7 +89,10 @@ enum AmplitudeTakeover {
         return isDefault ? "com.amplitude.database" : "com.amplitude.database_\(normalized)"
     }
 
-    private static func swiftSuiteDeviceId(apiKey: String, instance: String) -> String? {
+    private static func swiftSuiteDeviceId(apiKey: String?, instance: String) -> String? {
+        // Anahtar yoksa suite adı kurulamaz: anlamsız bir adla aramak faydasızdır ve niyeti gizler.
+        // SQLite yolu anahtara bağlı değil, etkilenmez.
+        guard let apiKey, !apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
         let name = swiftSuiteName(apiKey: apiKey, instance: instance)
         // `UserDefaults(suiteName:)` yalnız okunur, anahtar yaratmaz. `string(forKey:)` sayıyı da metne
         // çevirir; Amplitude yalnız String yazar, başka tür bozuk veridir.

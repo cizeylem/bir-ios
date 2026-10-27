@@ -341,4 +341,26 @@ final class AmplitudeTakeoverTests: XCTestCase {
         // Gerçek Platform/dizin: hiçbir şey bulunamaz ama çökmemeli ve configured çalışmalı.
         XCTAssertEqual(AmplitudeTakeover.find(apiKey: apiKey, configured: "x")?.source, "configured")
     }
+
+    // MARK: - Görev 17: anahtarsız arama
+
+    private func findKeyless(_ key: String?) -> Takeover? {
+        AmplitudeTakeover.find(apiKey: key, configured: nil, instance: "",
+                               ownStore: ownStore(), libraryDirectory: library)
+    }
+
+    func testAnahtarNilkenSwiftSuiteTaranmazAmaSQLiteCalisir() throws {
+        // Anlamsız ad (anahtarsız kurulan suite) dolu olsa bile okunmamalı.
+        let bogus = "com.amplitude.storage.amplitude-swift-storage--$default_instance"
+        UserDefaults(suiteName: bogus)!.set("bogus-id", forKey: "device_id")
+        defer { UserDefaults().removePersistentDomain(forName: bogus) }
+        XCTAssertNil(findKeyless(nil), "anahtar yokken suite taranmaz")
+        XCTAssertNil(findKeyless(""))
+        XCTAssertNil(findKeyless("   "))
+        try makeDB(deviceId: "sql-id")
+        let t = findKeyless(nil)
+        XCTAssertEqual(t?.deviceId, "sql-id")
+        XCTAssertEqual(t?.source, "amplitude-sqlite")
+        XCTAssertEqual(findKeyless("")?.source, "amplitude-sqlite")
+    }
 }

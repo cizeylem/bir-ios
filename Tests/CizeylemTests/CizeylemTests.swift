@@ -1,4 +1,5 @@
 import XCTest
+import SQLite3
 @testable import Cizeylem
 
 // MARK: - Test altyapısı
@@ -1379,6 +1380,95 @@ final class CizeylemTests: XCTestCase {
         XCTAssertTrue(logged.contains("yazma anahtarı reddedildi"), "sessiz durmaz")
         XCTAssertEqual(s.queued, 1, "durdurulan SDK kuyruğu SİLMEZ")
         await c.shutdown()
+    }
+
+    // MARK: - Görev 17: Amplitude devralması Amplitude'un anahtarıyla arar
+
+    private func ampSuiteName(_ key: String) -> String {
+        "com.amplitude.storage.amplitude-swift-storage-\(key)-$default_instance"
+    }
+
+    private func putAmpId(_ id: String, key: String) {
+        UserDefaults(suiteName: ampSuiteName(key))!.set(id, forKey: "device_id")
+    }
+
+    private func takeoverId(_ cfg: Configuration) async -> String? {
+        let net = Net()
+        let c = Core(config: cfg, deps: deps(net, freshLifecycle: true))
+        await grant(c)
+        let id = await c.distinctId()
+        await c.shutdown()
+        return id
+    }
+
+    func testLegacyAmplitudeApiKeyVerilinceSwiftSuitesindenDevralinir() async {
+        let ampKey = "amp-\(UUID().uuidString)"
+        putAmpId("amp-id", key: ampKey)
+        defer { UserDefaults().removePersistentDomain(forName: ampSuiteName(ampKey)) }
+        let id = await takeoverId(Configuration(
+            writeKey: "ck_w_test", legacyAmplitude: true, legacyAmplitudeApiKey: ampKey))
+        XCTAssertEqual(id, "amp-id")
+    }
+
+    func testWriteKeyInSuitesiTaranmazAmplitudeAnahtarininkiDevralinir() async {
+        let ampKey = "amp-\(UUID().uuidString)"
+        let writeKey = "ck_w_\(UUID().uuidString)"
+        putAmpId("dogru-amplitude-id", key: ampKey)
+        putAmpId("yanlis-writekey-id", key: writeKey)
+        defer {
+            UserDefaults().removePersistentDomain(forName: ampSuiteName(ampKey))
+            UserDefaults().removePersistentDomain(forName: ampSuiteName(writeKey))
+        }
+        let id = await takeoverId(Configuration(
+            writeKey: writeKey, legacyAmplitude: true, legacyAmplitudeApiKey: ampKey))
+        XCTAssertEqual(id, "dogru-amplitude-id")
+    }
+
+    func testAmplitudeAnahtariYokkenWriteKeySuitesiTaranmazSQLiteCalisir() async throws {
+        let writeKey = "ck_w_\(UUID().uuidString)"
+        putAmpId("yanlis-writekey-id", key: writeKey)
+        defer { UserDefaults().removePersistentDomain(forName: ampSuiteName(writeKey)) }
+
+        let none = await takeoverId(Configuration(writeKey: writeKey, legacyAmplitude: true))
+        XCTAssertNotEqual(none, "yanlis-writekey-id", "write key'in suite'i taranmaz")
+        XCTAssertNotNil(UUID(uuidString: none ?? ""), "taze anonim kimlik")
+    }
+
+    func testAmplitudeAnahtariYokkenSQLiteYoluYineCalisir() async throws {
+        let writeKey = "ck_w_\(UUID().uuidString)"
+        putAmpId("yanlis-writekey-id", key: writeKey)
+        defer { UserDefaults().removePersistentDomain(forName: ampSuiteName(writeKey)) }
+        let amp = root.appendingPathComponent("amp", isDirectory: true)
+        try FileManager.default.createDirectory(at: amp, withIntermediateDirectories: true)
+        var db: OpaquePointer?
+        XCTAssertEqual(sqlite3_open(amp.appendingPathComponent("com.amplitude.database").path, &db), SQLITE_OK)
+        XCTAssertEqual(sqlite3_exec(db, """
+            CREATE TABLE store (key TEXT PRIMARY KEY NOT NULL, value TEXT);
+            CREATE TABLE long_store (key TEXT PRIMARY KEY NOT NULL, value INTEGER);
+            INSERT INTO store VALUES ('device_id', 'sql-id');
+            """, nil, nil, nil), SQLITE_OK)
+        sqlite3_close(db)
+        let sql = await takeoverId(Configuration(writeKey: writeKey, legacyAmplitude: true))
+        XCTAssertEqual(sql, "sql-id")
+    }
+
+    func testLegacyAmplitudeKapaliykenAnahtarVerilseDeHicbirSeyTaranmaz() async {
+        let ampKey = "amp-\(UUID().uuidString)"
+        putAmpId("amp-id", key: ampKey)
+        defer { UserDefaults().removePersistentDomain(forName: ampSuiteName(ampKey)) }
+        let id = await takeoverId(Configuration(
+            writeKey: "ck_w_test", legacyAmplitude: false, legacyAmplitudeApiKey: ampKey))
+        XCTAssertNotEqual(id, "amp-id")
+        XCTAssertNotNil(UUID(uuidString: id ?? ""))
+    }
+
+    func testAcikDeviceIdAmplitudeAnahtariVarkenDeOndeGelir() async {
+        let ampKey = "amp-\(UUID().uuidString)"
+        putAmpId("amp-id", key: ampKey)
+        defer { UserDefaults().removePersistentDomain(forName: ampSuiteName(ampKey)) }
+        let id = await takeoverId(Configuration(
+            writeKey: "ck_w_test", deviceId: "host-verdi", legacyAmplitude: true, legacyAmplitudeApiKey: ampKey))
+        XCTAssertEqual(id, "host-verdi")
     }
 
     func testLibVersionSurumKaynagiylaAyni() throws {
