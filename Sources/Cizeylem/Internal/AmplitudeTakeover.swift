@@ -8,7 +8,7 @@ struct Takeover: Sendable {
     let optOut: Bool
 }
 
-/// host uygulamanın bugünkü Amplitude kurulumundan `device_id` devralır; Amplitude ve Çizeylem paralel
+/// Host uygulamanın mevcut Amplitude kurulumundan `device_id` devralır; Amplitude ve Çizeylem paralel
 /// çalışırken iki raporun cihaz düzeyinde eşleşmesi buna bağlıdır.
 ///
 /// Mutlak kural: SALT OKUMA. Amplitude'un hiçbir kaydı yazılmaz, silinmez, taşınmaz; okuma yolu
