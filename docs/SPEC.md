@@ -10,7 +10,7 @@ Android eşi `cizeylem/bir-android` → `docs/SPEC.md`; **alan adları ikisinde 
 
 ## 0. Amaç
 
-host uygulamada AppsFlyer/Amplitude yerine Çizeylem'e geçiş için native Swift analitik
+Mevcut AppsFlyer/Amplitude kurulumlarından Çizeylem'e geçiş için native Swift analitik
 SDK'sı: iOS + tvOS + macOS. Davranış web/JS SDK'sıyla **birebir aynı**.
 
 ## 1. Paketler
@@ -146,7 +146,7 @@ tvOS'ta AdServices / AdAttributionKit / SKAdNetwork **yoktur**.
 - [ ] S5 gelince `bir-js/spec/` adaptörü yeşil
 - [ ] Xcode privacy report çıktısı depoda
 - [ ] Öneksiz SPM tag yayınlandı (`1.0.0-beta.1`)
-- [ ] `pilot-uygulama` pilot PR'ı: yayınlanmış tag'e bağlı, event'ler test projesinde
+- [ ] Pilot uygulama PR'ı: yayınlanmış tag'e bağlı, event'ler test projesinde
       görünüyor, eski `device_id` korunmuş (merge + canlı Doğukan'da)
 
 ## 10. Bizde olmayanlar (Doğukan'ı bekleyen)
