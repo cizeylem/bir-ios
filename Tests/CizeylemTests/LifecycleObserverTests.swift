@@ -37,9 +37,11 @@ private final class LifeSink: Sendable {
         { [continuation] in continuation.yield(LifeEv(name: "FLUSH", props: [:], onMain: Thread.isMainThread)) }
     }
 
-    /// En az `count` kayıt gelene kadar (en çok ~3 sn) bekler, sonra hepsini döner.
+    /// En az `count` kayıt gelene kadar (en çok ~15 sn) bekler, sonra hepsini döner.
+    /// Sınır yalnız başarısızlıkta beklenir; beklenen sayı gelince hemen döner. ~3 sn, kalabalık CI
+    /// runner'ında (iOS simülatörü, paket yerelin ~2 katı sürdü) yetmedi.
     func wait(_ count: Int) async -> [LifeEv] {
-        for _ in 0..<300 {
+        for _ in 0..<1500 {
             let items = await log.items
             if items.count >= count { return items }
             try? await Task.sleep(nanoseconds: 10_000_000)
@@ -538,7 +540,7 @@ final class LifecycleObserverTests: XCTestCase {
             o?.start()
             o = nil
         }
-        for _ in 0..<200 where weakRef.alive { try? await Task.sleep(nanoseconds: 10_000_000) }
+        for _ in 0..<1000 where weakRef.alive { try? await Task.sleep(nanoseconds: 10_000_000) }
         XCTAssertFalse(weakRef.alive)
     }
 
