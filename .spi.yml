@@ -1,0 +1,7 @@
+# Swift Package Index. Doküman macOS'ta (SwiftPM) üretilir; genel API platforma bağlı değil.
+# Platform uyumluluk matrisi burada yazılmaz: SPI onu kendi derlemelerinden çıkarır.
+# Gerekçe: docs/RELEASE.md §Swift Package Index.
+version: 1
+builder:
+  configs:
+    - documentation_targets: [Cizeylem, CizeylemAttribution]
