@@ -1,0 +1,75 @@
+# Yayın: öneksiz semver tag'i (`0.2.0`, `1.0.0-beta.1`) için CI YEŞİL bittikten sonra GitHub Release açar.
+# Paket kayıt defteri yok; SPM tüketicisi tag'i doğrudan çözer. Release yalnız sürüm notudur. Ayrıntı: docs/RELEASE.md
+#
+# NEDEN `workflow_run` (tag push'u değil): ci.yml tag'de zaten koşuyor. Bu iş onun bitişini dinler ve yalnız
+# o koşu `success` ise Release açar; yani kırmızı (ya da iptal edilmiş) bir tag'e Release çıkmaz ve CI iki kez
+# koşmaz. `needs` aynı workflow içinde çalışır; o yol yazma iznini ci.yml'e taşırdı, burada izin ayrı kalır.
+# Bedeli: `workflow_run` yalnız VARSAYILAN DALDAKİ bu dosyayla tetiklenir (tag'i atmadan önce main'de olmalı)
+# ve tetikleyici tag deseni (`[0-9]*`) burada filtre olarak yazılamaz; aşağıda adımda kontrol edilir.
+#
+# ACTION YOK: iş yalnız runner'daki `gh` ile çalışır, depo checkout edilmez. Bu işte `contents: write` jetonu
+# var; üçüncü taraf kod çalıştırmamak, onu ele geçirilebilecek bir action'a hiç vermemek demek. Bir action
+# eklenirse ci.yml'deki kural geçerli: tam commit SHA'sına sabitle, yanına sürüm yorumu yaz (etiket taşınabilir,
+# SHA taşınmaz; yazma jetonu olan işte hareketli etiket = jetonun sızma yolu).
+name: Yayın
+
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.event.workflow_run.head_branch }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: GitHub Release
+    # Yalnız bu depodaki bir PUSH'un yeşil CI koşusu. Ana dal itişleri de buraya düşer (head_branch = main);
+    # onlar burada elenir. PR koşuları (`pull_request`) hiç geçmez.
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.head_repository.full_name == github.repository &&
+      github.event.workflow_run.head_branch != 'main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      # Etkinlik alanları betiğe yalnız ortam değişkeniyle girer; `run:` içine doğrudan yazılmaz (enjeksiyon).
+      # Tag push'unda `head_branch` tag'in adıdır.
+      TAG: ${{ github.event.workflow_run.head_branch }}
+      SHA: ${{ github.event.workflow_run.head_sha }}
+    steps:
+      # ci.yml tag'de `[0-9]*` ile tetiklenir ve tag == VERSION'u zaten doğrular; burada aynı kapılar,
+      # CI'nın gördüğü commit'e karşı yeniden kurulur. Çünkü tag, CI koşarken silinip başka commit'e atılmış olabilir.
+      - name: Tag'i doğrula (öneksiz semver, CI'nın commit'i, VERSION)
+        run: |
+          if ! [[ "$TAG" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::'$TAG' öneksiz semver tag değil (beklenen 1.2.3 ya da 1.2.3-beta.1)"; exit 1
+          fi
+          tag_sha="$(gh api "repos/$GH_REPO/commits/tags/$TAG" --jq .sha)" || {
+            echo "::error::'$TAG' tag'i depoda yok (CI bir dal itişiyle mi koştu?)"; exit 1; }
+          if [ "$tag_sha" != "$SHA" ]; then
+            echo "::error::tag $TAG artık başka bir commit'i gösteriyor (tag: $tag_sha, CI'nın test ettiği: $SHA); tag yeniden atılmış. Release açılmadı."; exit 1
+          fi
+          file_version="$(gh api "repos/$GH_REPO/contents/VERSION?ref=$SHA" -H 'Accept: application/vnd.github.raw' | tr -d '[:space:]')"
+          echo "TAG=$TAG  VERSION=$file_version  commit=$SHA"
+          if [ "$file_version" != "$TAG" ]; then
+            echo "::error::tag ($TAG) VERSION ($file_version) ile eşleşmiyor"; exit 1
+          fi
+
+      # Yeniden koşu (CI'yı tekrar çalıştırmak bu işi de tetikler) aynı Release'i ikinci kez açmaya çalışmasın.
+      # Ön sürüm = tag'de `-` (semver): `--prerelease`, böylece "Latest" olarak işaretlenmez.
+      - name: GitHub Release oluştur
+        run: |
+          if gh release view "$TAG" > /dev/null 2>&1; then
+            echo "::notice::$TAG için Release zaten var; dokunulmadı"; exit 0
+          fi
+          args=(--verify-tag --title "$TAG" --generate-notes)
+          case "$TAG" in *-*) args+=(--prerelease) ;; esac
+          gh release create "$TAG" "${args[@]}"

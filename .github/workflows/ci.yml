@@ -1,5 +1,6 @@
 # CI: her push, pull request ve sürüm tag'inde paketi derler ve iOS + tvOS simülatöründe test eder.
-# Sır KULLANMAZ; yayın adımı yok (tag'i elle atılır, bkz. docs/RELEASE.md).
+# Sır KULLANMAZ; yayın adımı yok (tag'i elle atılır, bkz. docs/RELEASE.md). Tag koşusu yeşil biterse
+# release.yml (`workflow_run`) GitHub Release'i açar; bu workflow'un adı (`CI`) orada tetikleyicidir.
 #
 # Her adımın ne KANITLADIĞI docs/RELEASE.md §CI'da yazılı. Kısaca: yeşil = derleme temiz, test sayısı
 # alt sınırın altına düşmedi, hiçbir test atlanmadı ve testler iOS VE tvOS'ta gerçekten koştu.
