@@ -164,5 +164,5 @@ tvOS'ta AdServices / AdAttributionKit / SKAdNetwork **yoktur**.
 - **[doğrula]** Amplitude-Swift UserDefaults suite adının `<instance>` eki.
 - **[sor]** macOS hedefi şartnamede var ama kabul kriterlerinde ve pilotta yok.
   Bu planda derlenir ve birim testleri çalışır; örnek uygulama ve pilot yalnız iOS + tvOS.
-- **[sor]** Dağıtım tabanı: plan `iOS 15 / tvOS 15 / macOS 12` seçiyor. host uygulamanın
+- **[sor]** Dağıtım tabanı: plan `iOS 15 / tvOS 15 / macOS 12` seçiyor. Host uygulamanın
   bugünkü tabanı bunun üstündeyse yükseltilir.

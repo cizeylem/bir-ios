@@ -104,7 +104,7 @@ Plan ve SPEC §11 bunu seçer; SPEC'te **[sor]** olarak açık duruyor ve host u
 Plan bu tabanları gerekçe yazmadan seçer; aşağıdaki gerekçe geriye dönük çıkarımdır. `Package.swift`
 `swift-tools-version: 6.0` (strict concurrency) kullanır ve ledger'da (Görev 5) daha yüksek OS gerektiren
 `@available`/`Mutex`/`OSAllocatedUnfairLock` bilinçle **kullanılmadı** (actor tabanlı test sahtesi), yani kod tabanı
-yükselmesin diye tasarlandı. host uygulamanın tabanı daha yüksekse yükseltmek kodu değiştirmez; daha düşükse (iOS 14 ve
+yükselmesin diye tasarlandı. Host uygulamanın tabanı daha yüksekse yükseltmek kodu değiştirmez; daha düşükse (iOS 14 ve
 altı) paket kurulamaz. Taban iOS 15'te çalışma zamanında **denenmedi** (§1).
 
 ## 6. Gerçek cihaz denemeleri
