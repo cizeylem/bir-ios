@@ -52,7 +52,7 @@ jobs:
           if ! [[ "$TAG" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
             echo "::error::'$TAG' öneksiz semver tag değil (beklenen 1.2.3 ya da 1.2.3-beta.1)"; exit 1
           fi
-          tag_sha="$(gh api "repos/$GH_REPO/commits/tags/$TAG" --jq .sha)" || {
+          tag_sha="$(gh api "repos/$GH_REPO/commits/refs/tags/$TAG" --jq .sha)" || {
             echo "::error::'$TAG' tag'i depoda yok (CI bir dal itişiyle mi koştu?)"; exit 1; }
           if [ "$tag_sha" != "$SHA" ]; then
             echo "::error::tag $TAG artık başka bir commit'i gösteriyor (tag: $tag_sha, CI'nın test ettiği: $SHA); tag yeniden atılmış. Release açılmadı."; exit 1
