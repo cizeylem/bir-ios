@@ -140,6 +140,20 @@ Amplitude'un `optOut` değeri korunur. Amplitude kaydı **silinmez/değiştirilm
 
 tvOS'ta AdServices / AdAttributionKit / SKAdNetwork **yoktur**.
 
+### 8.1 Uçlar ve adresler (sunucu sözleşmesi: cizeylem-1 `docs/PROTOCOL.md` §9)
+
+| İstek | Gövde | Adres |
+|---|---|---|
+| `POST /v1/batch` | olaylar (IDFA yok) | `endpoint` (`in.cizeylem.com`) |
+| `POST /v1/attribution/anon` | `adservices_token` (kimlik süzülür) | `endpoint` |
+| `POST /v1/attribution`, IDFA yok | `device_id`, `adservices_token`, `att_status` | `endpoint` |
+| `POST /v1/attribution`, IDFA var | `device_id`, `adservices_token`, `att_status`, `idfa` | `trackingEndpoint` (`attr.cizeylem.com`) |
+
+Kural: adresi rota değil **oluşan gövde** belirler (`AttributionBody.carriesIdfa`). Gövde tek düz JSON
+nesnesidir, gzip'lenir, yetki `Authorization: Bearer <write_key>`. Sunucu sinyali `$attribution` olayı
+olarak saklar. İzleme adresi ayrıdır çünkü iOS 17+ `NSPrivacyTrackingDomains`'teki host'ları ATT izni
+vermemiş kullanıcıda engeller; uygulama listeye yalnız `trackingEndpoint` host'unu yazar (README).
+
 ## 9. Kabul kriterleri
 
 - [ ] Birim testler yeşil (iOS + tvOS simülatörü)
@@ -155,7 +169,7 @@ tvOS'ta AdServices / AdAttributionKit / SKAdNetwork **yoktur**.
 |---|---|
 | Test projesi + `ck_w_` write key | Canlı sunucuya deneme gönderilemez |
 | S1 — mobil context kolonları | §4 alanları gönderilir, sunucuda saklanmaz |
-| S3 — `context.consent` / `att_status` + `/v1/attribution/anon` | SJ-A'nın rızasız yolu uçtan uca denenemez |
+| S3 — `context.consent` / `att_status` | Context alanları sunucuda ayrı saklanmaz. (`/v1/attribution` ve `/v1/attribution/anon` uçları 0.3.0 ile sunucuda var) |
 | S5 — ortak test seti `bir-js/spec/` | "spec yeşil" yerine birim testler |
 | `research_notes/…` (sdk_engineering.md, apple_platform.md) | Doğukan'ın makinesinde; gerekirse istenecek |
 

@@ -5,8 +5,18 @@ import Foundation
 public struct Configuration: Sendable {
     /// Yazma anahtarı (`ck_w_…`). `Authorization: Bearer` başlığına girer.
     public let writeKey: String
-    /// Toplama ucu. Yol (`/v1/batch`) `Transport` tarafından eklenir.
+    /// Toplama ucu. Yol (`/v1/batch`) `Transport` tarafından eklenir. Olaylar ve IDFA
+    /// taşımayan bütün attribution istekleri buraya gider.
     public let endpoint: URL
+    /// IDFA taşıyan attribution gövdesinin gideceği uç. Başka hiçbir istek buraya gitmez.
+    ///
+    /// Ev sahibi uygulama `PrivacyInfo.xcprivacy`'de izlemeyi beyan ediyorsa
+    /// (`NSPrivacyTracking = true`) `NSPrivacyTrackingDomains`'e **yalnız bu host'u** yazar,
+    /// `endpoint`'in host'unu asla yazmaz: iOS 17+ ATT izni vermemiş kullanıcıda o listedeki
+    /// adreslere bağlantıyı keser; `endpoint` listeye girerse bu kullanıcıların bütün analitiği
+    /// kesilir. Yönlendirmeyi rota değil gövde belirler: IDFA'sız kimlikli attribution da
+    /// `endpoint`'e gider, ATT'yi reddeden kullanıcının Apple Search Ads verisi kaybolmaz.
+    public let trackingEndpoint: URL
     /// Dıştan dayatılan `device_id` (SPEC §6 devralma zincirinin ilk halkası). Boş/boşluk ise yok sayılır.
     public let deviceId: String?
     /// Kuyruk bu sayıya ulaşınca gönderim tetiklenir. Verilmezse `Platform.current.flushAt`
@@ -33,6 +43,7 @@ public struct Configuration: Sendable {
     public init(
         writeKey: String,
         endpoint: URL = Configuration.defaultEndpoint,
+        trackingEndpoint: URL = Configuration.defaultTrackingEndpoint,
         deviceId: String? = nil,
         flushAt: Int? = nil,
         flushInterval: TimeInterval = 30,
@@ -42,6 +53,7 @@ public struct Configuration: Sendable {
     ) {
         self.writeKey = writeKey
         self.endpoint = endpoint
+        self.trackingEndpoint = trackingEndpoint
         self.deviceId = deviceId
         self.flushAt = flushAt
         self.flushInterval = flushInterval
@@ -51,6 +63,8 @@ public struct Configuration: Sendable {
     }
 
     public static let defaultEndpoint = URL(string: "https://in.cizeylem.com")!
+    /// Varsayılan izleme ucu. `NSPrivacyTrackingDomains`'e yazılacak tek host budur.
+    public static let defaultTrackingEndpoint = URL(string: "https://attr.cizeylem.com")!
 }
 
 /// SDK'nın kendi sağlığı. Hata ayıklama ve ev sahibi uygulamanın tanılaması içindir;

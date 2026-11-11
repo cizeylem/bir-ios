@@ -221,9 +221,11 @@ actor Core {
             let session = URLSession(configuration: Core.sessionConfiguration())
             return Transport(endpoint: config.endpoint, apiKey: config.writeKey, session: session)
         }
-        var makeAttributionSender: @Sendable (Configuration) -> AttributionSending = { config in
+        /// İkinci argüman taban adrestir: `config.endpoint` ya da `config.trackingEndpoint`
+        /// (bkz. `sendAttribution`).
+        var makeAttributionSender: @Sendable (Configuration, URL) -> AttributionSending = { config, base in
             let session = URLSession(configuration: Core.sessionConfiguration())
-            return Transport(endpoint: config.endpoint, apiKey: config.writeKey, session: session)
+            return Transport(endpoint: base, apiKey: config.writeKey, session: session)
         }
     }
 
@@ -242,7 +244,8 @@ actor Core {
     private let location: LifecycleLocation
 
     private var consent = Consent()
-    private var attributionSender: AttributionSending?
+    /// Taban adres başına bir gönderici (ingest ve izleme uçları).
+    private var attributionSenders: [URL: AttributionSending] = [:]
     private var started = false
     private var dispatcher: Dispatcher?
     private var session: SessionStore?
@@ -710,8 +713,13 @@ actor Core {
             warn("attribution gövdesi oluşturulamadı; gönderilmedi")
             return
         }
-        let sender = attributionSender ?? deps.makeAttributionSender(config)
-        attributionSender = sender
+        // Adresi rota değil oluşan gövde belirler: IDFA gerçekten gövdedeyse izleme ucu,
+        // değilse ingest ucu. Rıza bayrağına bakılmaz; ATT `authorized` değilken ya da IDFA
+        // sıfırken gövdede IDFA yoktur ve istek, ATT'yi reddedenler için engellenen izleme
+        // host'una gitmez.
+        let base = AttributionBody.carriesIdfa(body) ? config.trackingEndpoint : config.endpoint
+        let sender = attributionSenders[base] ?? deps.makeAttributionSender(config, base)
+        attributionSenders[base] = sender
         let (outcome, _) = await sender.post(path: path, body: body)
         // Tekrar denenmez (tek seferlik sinyal; kuyruk yok) ama sessiz de kalmaz.
         if outcome != .ok { warn("attribution gönderimi başarısız (\(path)): \(outcome)") }

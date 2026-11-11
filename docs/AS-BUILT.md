@@ -163,8 +163,20 @@ yerine geçer). `bir-js` ikiye katlar (1, 2, 4, … 256, 300). Android iOS ile a
 - Kapılar (`AttributionRoute`, `allowsIdfa` vb.) iki modül arasında kullanılsın diye `package` erişimli
   (public API değil).
 - tvOS: AdServices/AdAttributionKit/SKAdNetwork yok; `AdServicesToken.read()` `nil`, `TrackingStatus` `unavailable`.
-- Alan adları (`adservices_token`, `att_status`, `idfa`) ve kimlikli uç yolu (`/v1/attribution`) sunucu
-  sözleşmesinde henüz yazılı değil; tahmindir (bkz. Görev 12 raporu, açık sorular).
+- Alan adları (`adservices_token`, `att_status`, `idfa`, `device_id`) ve uç yolları (`/v1/attribution`,
+  `/v1/attribution/anon`) 0.3.0 itibarıyla sunucu sözleşmesine bağlandı (cizeylem-1 `docs/PROTOCOL.md` §9).
+  0.3.0'dan önce sunucuda bu uçlar yoktu: gönderilen attribution 404 alıp kayboluyordu.
+
+## 8c. İzleme ucu ayrımı (0.3.0, ITMS-91064)
+
+- `Configuration.trackingEndpoint` (varsayılan `https://attr.cizeylem.com`): YALNIZ IDFA taşıyan gövde buraya
+  gider. Karar oluşan gövdeye göre (`AttributionBody.carriesIdfa`, iç içe ve yazım varyantları dahil); rıza
+  bayrağına göre değil. Olaylar, kimliksiz ve IDFA'sız kimlikli attribution `endpoint`'e gider.
+- Neden: Gluco 2.0.0 (112) `NSPrivacyTracking = true` + boş `NSPrivacyTrackingDomains` yüzünden ITMS-91064 ile
+  reddedildi. `in.cizeylem.com` listeye girseydi iOS 17+ ATT'yi reddeden kullanıcıların bütün analitiğini keserdi.
+- Taban adres başına bir gönderici önbelleklenir (`makeAttributionSender(config, base)`).
+- Kanıt: `TrackingEndpointTests` (11 test; macOS `swift test` yeşil). Kaynak taraması host adlarının yalnız
+  `Configuration.swift`'te geçtiğini doğrular. **Gerçek cihazda ATT reddedilmiş/verilmiş senaryo henüz denenmedi.**
 
 ## 9. Görev 14: CI, yayın ve biriken triyaj
 

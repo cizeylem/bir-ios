@@ -45,6 +45,21 @@ enum AttributionBody {
         return encode(o)
     }
 
+    /// Gövde, herhangi bir derinlikte IDFA anahtarı taşıyor mu. İzleme ucu seçimi buna bağlıdır
+    /// (`Configuration.trackingEndpoint`); bozuk gövde `false` döner ama zaten gönderilmez.
+    static func carriesIdfa(_ body: String) -> Bool {
+        guard let o = try? JSONSerialization.jsonObject(with: Data(body.utf8)) else { return false }
+        return contains(normalize("idfa"), in: o)
+    }
+
+    private static func contains(_ key: String, in value: Any) -> Bool {
+        if let d = value as? [String: Any] {
+            return d.contains { normalize($0.key) == key || contains(key, in: $0.value) }
+        }
+        if let a = value as? [Any] { return a.contains { contains(key, in: $0) } }
+        return false
+    }
+
     /// Anahtar karşılaştırması yazım varyantlarına dayanır (`deviceId`, `device-id`, `Device Id`):
     /// son kapı çağıranın hatasına karşıdır, tam eşleşme bunu yapmaz.
     static func normalize(_ key: String) -> String {

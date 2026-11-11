@@ -193,7 +193,7 @@ final class AttributionTests: XCTestCase {
         d.defaultsSuite = suite
         d.lifecycle = LifecycleLocation(url: root.appendingPathComponent("life"), usesDefaults: false)
         d.amplitudeLibraryDirectory = root.appendingPathComponent("amp")
-        d.makeAttributionSender = { _ in sender }
+        d.makeAttributionSender = { _, _ in sender }
         let core = Core(config: Configuration(writeKey: "ck_w_t", flushInterval: 0, legacyAmplitude: false), deps: d)
         await core.start()
         let consent = Consent(adSharing: true)

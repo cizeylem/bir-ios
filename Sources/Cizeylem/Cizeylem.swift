@@ -16,7 +16,7 @@ import AppKit
 public enum Cizeylem {
     /// SDK sürümü (`context.lib_version`). Tek kaynak: depo kökündeki `VERSION` dosyası;
     /// `CizeylemTests.testLibVersionSurumKaynagiylaAyni` ikisinin ayrışmasını engeller.
-    public static let version = "0.2.0"
+    public static let version = "0.3.0"
 
     private static let pipe = CommandPipe()
 

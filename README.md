@@ -24,14 +24,14 @@ iOS 15 / tvOS 15 çalışma zamanında henüz koşulmadı ([`docs/AS-BUILT.md`](
 ## Kurulum (Swift Package Manager)
 
 **Xcode:** *File > Add Package Dependencies…* → adres `https://github.com/cizeylem/bir-ios` → kural
-*Up to Next Minor Version*, `0.2.0` (1.0 öncesinde; bkz. [Sürümleme](#sürümleme)). Ardından hedefinize
+*Up to Next Minor Version*, `0.3.0` (1.0 öncesinde; bkz. [Sürümleme](#sürümleme)). Ardından hedefinize
 gereken ürünü (aşağıda) ekleyin.
 
 **`Package.swift`:**
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/cizeylem/bir-ios", from: "0.2.0"),
+    .package(url: "https://github.com/cizeylem/bir-ios", from: "0.3.0"),
 ],
 targets: [
     .target(
@@ -45,9 +45,9 @@ targets: [
 ]
 ```
 
-`from:` SwiftPM'de `0.2.0 ..< 1.0.0` aralığıdır, yani `0.3.0` gibi kırıcı olabilecek bir `0.x` sürümünü de
+`from:` SwiftPM'de `0.3.0 ..< 1.0.0` aralığıdır, yani `0.4.0` gibi kırıcı olabilecek bir `0.x` sürümünü de
 kabul eder. 1.0 öncesinde buna karşı korunmak için `.package(url: "https://github.com/cizeylem/bir-ios",
-.upToNextMinor(from: "0.2.0"))` kullanın.
+.upToNextMinor(from: "0.3.0"))` kullanın.
 
 CocoaPods trunk'a yayın **yapılmaz**; dağıtım yalnız SPM ve git tag'idir (bkz. [`docs/RELEASE.md`](docs/RELEASE.md)).
 
@@ -149,7 +149,33 @@ Attribution.start(sink: Cizeylem.attributionSink, consent: consent)
 - **`CizeylemAttribution`:** `DeviceID` (IDFA) ve `AdvertisingData` (AdServices token) toplanan veri türlerini
   `Linked = true`, `Tracking = false`, amaç `Analytics` olarak beyan eder.
 - Takip kararı uygulamanındır: IDFA'yı kendi reklam/izleme amacınızla kullanıyorsanız **kendi** manifest'inizde
-  `NSPrivacyTracking`'i `true` yapın ve `NSPrivacyTrackingDomains`'i doldurun.
+  `NSPrivacyTracking`'i `true` yapın ve `NSPrivacyTrackingDomains`'i doldurun (aşağıda).
+
+### İzleme alan adı (`NSPrivacyTrackingDomains`)
+
+Uygulamanız `NSPrivacyTracking = true` diyorsa Apple izleme yapılan alan adlarının listelenmesini ister;
+liste boşsa gönderim **ITMS-91064: Invalid tracking information** ile reddedilir. iOS 17+ ise ATT izni
+vermemiş kullanıcıda bu listedeki adreslere bağlantıyı **keser**.
+
+Bu yüzden SDK IDFA taşıyan tek isteği (kimlikli attribution, ATT `authorized` + `adSharing`) ayrı bir
+adrese gönderir: `Configuration.trackingEndpoint`, varsayılan `https://attr.cizeylem.com`. Olaylar ve IDFA'sız
+bütün attribution istekleri `endpoint`'e (`https://in.cizeylem.com`) gider. Adresi rota değil **gövde**
+belirler: IDFA'sız kimlikli attribution da `endpoint`'e gider, ATT'yi reddeden kullanıcının Apple Search
+Ads verisi kaybolmaz.
+
+```xml
+<key>NSPrivacyTracking</key>
+<true/>
+<key>NSPrivacyTrackingDomains</key>
+<array>
+    <string>attr.cizeylem.com</string>
+</array>
+```
+
+- Listeye **yalnız** `attr.cizeylem.com` yazın. `in.cizeylem.com`'u **asla** yazmayın: ATT'yi reddeden
+  her kullanıcının bütün analitiği kesilir. `cizeylem.com` (kök) de yazılmaz; alt alan adlarını kapsayabilir.
+- `trackingEndpoint`'i değiştirdiyseniz listeye o host'u yazın.
+- Arşivden sonra Xcode Organizer'da *Generate Privacy Report* ile listeyi doğrulayın.
 - IP+UA parmak izi hiçbir yerde üretilmez. IDFV `device_id` olarak kullanılmaz ve sunucuya gitmez; yalnız
   yedekten geri yüklenmiş kimliği tespit etmek için yerel bir özeti tutulur.
 
@@ -162,10 +188,10 @@ Ayrıntı: [`docs/SPEC.md`](docs/SPEC.md) §6.
 
 ## Sürümleme
 
-- Semver, **öneksiz** tag: `0.2.0`, `1.0.0-beta.1` (`v` öneki yok). Güncel sürüm: depo kökündeki
+- Semver, **öneksiz** tag: `0.3.0`, `1.0.0-beta.1` (`v` öneki yok). Güncel sürüm: depo kökündeki
   [`VERSION`](VERSION) dosyası.
 - `1.0.0`'a kadar küçük sürümde (`0.x`) kırıcı değişiklik olabilir. SwiftPM `0.x`'i özel ele almaz:
-  `from: "0.2.0"` `1.0.0`'a kadar her sürümü kabul eder; kırıcı değişikliği bilinçli almak için
+  `from: "0.3.0"` `1.0.0`'a kadar her sürümü kabul eder; kırıcı değişikliği bilinçli almak için
   `.upToNextMinor(from:)` kullanın.
 - İki ürün aynı depodan, aynı sürümle çıkar. Sürüm notları GitHub Releases'tadır.
 

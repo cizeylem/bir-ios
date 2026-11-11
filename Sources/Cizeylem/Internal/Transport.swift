@@ -21,7 +21,8 @@ enum Outcome: Sendable {
 /// geri kalan HER şey (404, 408, 422, 3xx, 5xx, ağ hatası) `retry`: bilinmeyen bir kodu `drop`
 /// saymak veriyi sessizce kaybettirir, `retry` saymanın bedeli ise yalnız bir sonraki denemedir.
 struct Transport: Sendable {
-    private let endpoint: URL
+    /// Taban adres. Testler varsayılan fabrikaların doğru host'u seçtiğini buradan doğrular.
+    let endpoint: URL
     private let apiKey: String
     private let session: URLSession
     private let now: @Sendable () -> Date

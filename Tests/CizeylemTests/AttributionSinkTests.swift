@@ -136,7 +136,7 @@ final class CoreAttributionTests: XCTestCase {
         d.defaultsSuite = suite
         d.lifecycle = LifecycleLocation(url: root.appendingPathComponent("life"), usesDefaults: false)
         d.amplitudeLibraryDirectory = root.appendingPathComponent("amp")
-        d.makeAttributionSender = { _ in sender }
+        d.makeAttributionSender = { _, _ in sender }
         let cfg = Configuration(
             writeKey: "ck_w_test", flushInterval: 0, legacyAmplitude: false, logger: { log.add($0) })
         return Core(config: cfg, deps: d)
