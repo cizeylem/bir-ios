@@ -8,26 +8,24 @@ actor FakeStateSink: AttributionStateSink {
     struct Delivery { let route: AttributionRoute; let fields: [String: String]; let envelope: AttributionEnvelope }
 
     var mode: Mode
-    var priorLaunch: Bool
     var stored: AttributionState?
     var results: [AttributionDelivery]
     private(set) var deliveries: [Delivery] = []
 
-    init(mode: Mode = .persistent, priorLaunch: Bool = false, stored: AttributionState? = nil,
-         results: [AttributionDelivery] = []) {
+    init(mode: Mode = .persistent, stored: AttributionState? = nil, results: [AttributionDelivery] = []) {
         self.mode = mode
-        self.priorLaunch = priorLaunch
         self.stored = stored
         self.results = results
     }
 
     func setResults(_ r: [AttributionDelivery]) { results = r }
+    func setMode(_ m: Mode) { mode = m }
 
     func loadAttributionState() async -> AttributionStateLoad {
         switch mode {
         case .unavailable: return .unavailable
         case .unreadable: return .unreadable
-        case .persistent: return stored.map(AttributionStateLoad.present) ?? .absent(priorLaunch: priorLaunch)
+        case .persistent: return stored.map(AttributionStateLoad.present) ?? .absent
         }
     }
 
@@ -64,11 +62,14 @@ final class RetryHarness: @unchecked Sendable {
     private var _tokens: [TokenRead] = []
     private var _status = "denied"
     private var _foreground: (@Sendable () -> Void)?
+    /// Kurulum anı: varsayılan bir dakika önce (taze kurulum).
+    private var _installedAt: Int64? = 1_763_000_000_000 - 60_000
     let tokenReads = Counter()
 
     var now: Int64 { get { lock.withLock { _now } } set { lock.withLock { _now = newValue } } }
     var status: String { get { lock.withLock { _status } } set { lock.withLock { _status = newValue } } }
     var sleeps: [TimeInterval] { lock.withLock { _sleeps } }
+    var installedAt: Int64? { get { lock.withLock { _installedAt } } set { lock.withLock { _installedAt = newValue } } }
     func tokens(_ t: [TokenRead]) { lock.withLock { _tokens = t } }
     func fireForeground() { lock.withLock { _foreground }?() }
 
@@ -84,6 +85,7 @@ final class RetryHarness: @unchecked Sendable {
         env.nowMs = { [self] in now }
         env.uuid = { [self] in lock.withLock { _uuid += 1; return "uuid-\(_uuid)" } }
         env.sleep = { [self] d in lock.withLock { _sleeps.append(d) } }
+        env.installedAtMs = { [self] in installedAt }
         env.observeForeground = { [self] handler in
             lock.withLock { _foreground = handler }
             return NSObject()
@@ -262,14 +264,15 @@ final class AttributionRetryTests: XCTestCase {
         XCTAssertEqual(d.first?.envelope.timeMs, t0)
     }
 
-    func testOnceki030AcilisiGondermezDurumuKaydeder() async {
+    func testEskiKurulumKayitsizGondermezDurumuKaydeder() async {
         let h = RetryHarness()
         h.status = "authorized"
-        let sink = FakeStateSink(priorLaunch: true)
+        h.installedAt = h.now - 40 * 86_400_000   // 0.3.0'dan yükseltme ya da SDK'yı yeni alan uygulama
+        let sink = FakeStateSink()
         let r = h.runner()
         await r.start(sink: sink, consent: full)
         let d = await sink.deliveries
-        XCTAssertTrue(d.isEmpty, "0.3.0'dan yükseltmede sinyal yeniden gitmemeli")
+        XCTAssertTrue(d.isEmpty, "eski kurulumda kayıt yokluğu yeni sinyal açmamalı")
         let st = await sink.stored
         XCTAssertEqual(st?.pending, false)
         XCTAssertEqual(st?.sentAttStatus, "authorized")
@@ -278,6 +281,102 @@ final class AttributionRetryTests: XCTestCase {
         await r.foreground()
         let after = await sink.deliveries.count
         XCTAssertEqual(after, 1)
+    }
+
+    func testKurulumAniBilinmiyorsaSinyalGider() async {
+        let h = RetryHarness()
+        h.installedAt = nil
+        let sink = FakeStateSink()
+        let r = h.runner()
+        await r.start(sink: sink, consent: identified)
+        let n = await sink.deliveries.count
+        XCTAssertEqual(n, 1)
+    }
+
+    /// Gözden geçirme bulgusu 2: ilk süreçte rıza sonradan verildi ve sinyal gidemedi; ikinci
+    /// süreç kayıt bulamasa da taze kurulum olduğu için sinyali gönderir.
+    func testRizaSonradanVerilipSinyalGidemezseIkinciSurecteGider() async {
+        let h = RetryHarness()
+        let sink = FakeStateSink(mode: .unavailable, results: Array(repeating: .retryLater, count: 5))
+        let r1 = h.runner()
+        await r1.start(sink: sink, consent: Consent())
+        await settle(r1)
+        await sink.setMode(.persistent)   // rıza verildi; süreç bir şey yazamadan öldü
+        await sink.setResults([.sent])
+        h.now += 3_600_000
+        let r2 = h.runner()
+        await r2.start(sink: sink, consent: identified)
+        let d = await sink.deliveries
+        XCTAssertEqual(d.last?.route, .identified)
+        let st = await sink.stored
+        XCTAssertEqual(st?.pending, false)
+    }
+
+    /// Gözden geçirme bulgusu 3: rızasız giden kimliksiz sinyalden sonra aynı süreçte analytics
+    /// verilince ikinci kimliksiz sinyal gitmez; bellek diske taşınır.
+    func testAyniSurecteAnalyticsGelinceIkinciAnonGitmez() async {
+        let h = RetryHarness()
+        let sink = FakeStateSink(mode: .unavailable)
+        let r = h.runner()
+        await r.start(sink: sink, consent: Consent())
+        await sink.setMode(.persistent)
+        await r.start(sink: sink, consent: Consent(analytics: true))
+        let d = await sink.deliveries
+        XCTAssertEqual(d.map(\.route), [.anonymous])
+        let st = await sink.stored
+        XCTAssertEqual(st?.insertId, d.first?.envelope.insertId)
+        XCTAssertEqual(st?.pending, false)
+    }
+
+    /// Gözden geçirme bulgusu 1: rıza yokken sinyal yalnız kurulumdan sonraki ilk dakikalarda açılır.
+    func testRizasizEskiKurulumdaHerAcilistaGitmez() async {
+        let h = RetryHarness()
+        h.installedAt = h.now - 2 * 3_600_000
+        let sink = FakeStateSink(mode: .unavailable)
+        for _ in 0..<3 {
+            let r = h.runner()   // her biri yeni süreç
+            await r.start(sink: sink, consent: Consent())
+        }
+        let n = await sink.deliveries.count
+        XCTAssertEqual(n, 0)
+    }
+
+    func testDenemeSurerkenGelenStartKaybolmaz() async {
+        let h = RetryHarness()
+        let gate = Gate()
+        let sink = SlowSink(gate: gate)
+        let r = h.runner()
+        let first = Task { await r.start(sink: sink, consent: Consent(analytics: true)) }   // kimliksiz, takılı
+        await gate.waitEntered()
+        await r.start(sink: sink, consent: identified)   // deneme sürerken yeni rıza
+        await gate.release()
+        await first.value
+        let routes = await sink.routes
+        XCTAssertEqual(routes, [.anonymous, .identified], "süren deneme bitince yeni rızayla yeniden koşmalı")
+    }
+
+    func testEskiSiraNumarasiYokSayilir() async {
+        let h = RetryHarness()
+        let sink = FakeStateSink(results: [.retryLater, .retryLater, .retryLater, .retryLater, .retryLater])
+        let r = h.runner()
+        await r.start(sink: sink, consent: identified, sequence: 2)
+        await settle(r)
+        await r.start(sink: sink, consent: Consent(), sequence: 1)   // geç koşan eski çağrı
+        await r.foreground()
+        let d = await sink.deliveries
+        XCTAssertEqual(Set(d.map(\.route)), [.identified])
+    }
+
+    func testKaliciTokenHatasindaSinirdanSonraTokensizGider() async {
+        let h = RetryHarness()
+        h.tokens(Array(repeating: .transient, count: 20))
+        let sink = FakeStateSink(stored: AttributionState(pending: true, insertId: "i", firstSignalAtMs: h.now, attempts: 5))
+        let r = h.runner()
+        await r.start(sink: sink, consent: full)
+        let d = await sink.deliveries
+        XCTAssertEqual(d.count, 1)
+        XCTAssertNil(d.first?.fields["adservices_token"])
+        XCTAssertNotNil(d.first?.fields["att_status"])
     }
 
     func testOkunamayanDurumdaDenenmez() async {
@@ -336,4 +435,51 @@ final class AttributionRetryTests: XCTestCase {
                        "devralınan kayıt")
         XCTAssertFalse(AttributionRunner.needsNewSignal(migrated, route: .identified, status: nil))
     }
+}
+
+/// Tek kapılı bekleme: ilk teslim girer ve serbest bırakılana kadar bekler.
+actor Gate {
+    private var entered = false
+    private var enteredWaiters: [CheckedContinuation<Void, Never>] = []
+    private var released = false
+    private var releaseWaiters: [CheckedContinuation<Void, Never>] = []
+
+    func enter() async {
+        entered = true
+        enteredWaiters.forEach { $0.resume() }
+        enteredWaiters = []
+        if released { return }
+        await withCheckedContinuation { releaseWaiters.append($0) }
+    }
+    func waitEntered() async {
+        if entered { return }
+        await withCheckedContinuation { enteredWaiters.append($0) }
+    }
+    func release() {
+        released = true
+        releaseWaiters.forEach { $0.resume() }
+        releaseWaiters = []
+    }
+}
+
+/// İlk teslimde kapıda bekleyen sink.
+actor SlowSink: AttributionStateSink {
+    let gate: Gate
+    private(set) var routes: [AttributionRoute] = []
+    private var stored: AttributionState?
+    init(gate: Gate) { self.gate = gate }
+
+    func loadAttributionState() async -> AttributionStateLoad { stored.map(AttributionStateLoad.present) ?? .absent }
+    @discardableResult func saveAttributionState(_ state: AttributionState) async -> Bool { stored = state; return true }
+    nonisolated func deliver(_ route: AttributionRoute, _ fields: [String: Any], envelope: AttributionEnvelope) async
+        -> AttributionDelivery {
+        await record(route)
+    }
+    private func record(_ route: AttributionRoute) async -> AttributionDelivery {
+        routes.append(route)
+        if routes.count == 1 { await gate.enter() }
+        return .sent
+    }
+    nonisolated func sendIdentified(_ fields: [String: Any]) async {}
+    nonisolated func sendAnonymous(_ fields: [String: Any]) async {}
 }

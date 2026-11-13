@@ -34,15 +34,28 @@ public enum Attribution {
     /// gitmez, gitmemiş olan gidene kadar denenir. `consent` o anki rızanın kopyasıdır; değişince
     /// yeniden çağrılmalıdır (ön plan tetikleyicisi son verilen kopyayı kullanır).
     ///
-    /// Durum yalnız rıza kalıcı iz bırakmaya izin veriyorsa (`analytics`) diske yazılır; rızasız
-    /// kimliksiz yolda tekrar yalnız bu süreç boyunca sürer.
+    /// Durum yalnız rıza kalıcı iz bırakmaya izin veriyorsa (`analytics`) diske yazılır. Rızasızken
+    /// tekrar yalnız bu süreç boyunca sürer ve sinyal yalnız kurulumdan sonraki ilk 15 dakikada açılır.
+    /// Kayıt yokken 30 günden eski kurulum (0.3.0'dan yükseltme) sinyali gitmiş sayar (SPEC §8.2).
     ///
     /// Dönüşüm değeri yazıcısını **kurmaz**: o ayrı ve açık bir çağrıdır
     /// (`enableConversionWriter`). Burada bir varsayılan yoktur, çünkü unutulan çağrı kapalı kalmalı.
     public static func start(sink: AttributionSink, consent: Consent) {
+        // Sıra numarası çağrı anında alınır: art arda iki çağrının görevleri ters sırayla koşsa da
+        // koşucu eski rızaya dönmez.
+        let seq = startSequence.next()
         Task.detached(priority: .utility) {
-            await AttributionRunner.shared.start(sink: sink, consent: consent)
+            await AttributionRunner.shared.start(sink: sink, consent: consent, sequence: seq)
         }
+    }
+
+    private static let startSequence = Sequence()
+
+    /// Kilitli artan sayaç (çağıranın thread'inde, beklemeden).
+    final class Sequence: @unchecked Sendable {
+        private let lock = NSLock()
+        private var value: UInt64 = 0
+        func next() -> UInt64 { lock.withLock { value += 1; return value } }
     }
 
     #if DEBUG
@@ -167,6 +180,9 @@ actor AttributionRunner {
         var backoff: [TimeInterval] = [5, 30, 120, 600]
         /// Ön plan bildirimini dinler; dönen nesne tutuldukça dinleme sürer. Testte `nil`.
         var observeForeground: (@Sendable (@escaping @Sendable () -> Void) -> AnyObject?)? = nil
+        /// Uygulamanın kurulum anı (epoch ms; bilinmiyorsa `nil`). Cihaza iz yazmadan okunur:
+        /// uygulama kabının `Library` dizininin oluşturulma tarihi (güncellemede değişmez).
+        var installedAtMs: @Sendable () -> Int64? = { AttributionRunner.liveInstalledAtMs() }
     }
 
     static let shared = AttributionRunner(environment: Environment(
@@ -175,6 +191,21 @@ actor AttributionRunner {
     /// Bu yaştan eski bekleyen sinyal `time` taşımaz: sunucu 7 günden eski olay zamanını düşürür
     /// (cizeylem-1 `PROTOCOL.md` §2). Yeni `insert_id` ve şimdiki zamanla gider.
     static let maxSignalAgeMs: Int64 = 6 * 24 * 60 * 60 * 1000
+
+    /// Kalıcı kayıt yokken bu yaştan genç kurulum yeni sinyal açar; daha eskisi gitmiş sayılır.
+    /// Kaydın yokluğu iki şey olabilir: yeni kurulum ya da SDK'nın bu sürümüyle ilk kez açılan eski
+    /// kurulum (0.3.0'dan yükseltme, SDK'yı yeni alan uygulama). 30 gün Apple'ın tıklama penceresidir;
+    /// bu pencerede ikinci sinyal gitse de sunucu aynı cihazın 30 gün içindeki ikinci token'ını
+    /// Apple'a sormaz (cizeylem-1 PLAN-APPLE-ADS K3).
+    static let freshInstallWindowMs: Int64 = 30 * 24 * 60 * 60 * 1000
+
+    /// Rıza yokken (durum yazılamaz) sinyal yalnız kurulumdan sonraki bu süre içinde açılır: aksi hâlde
+    /// her açılış yeni bir kimliksiz "kurulum" gönderirdi. Geri çekilme basamaklarının toplamını (~13 dk)
+    /// kapsar.
+    static let anonymousWindowMs: Int64 = 15 * 60 * 1000
+
+    /// Bu kadar geçici token hatasından sonra sinyal token'sız gider (ATT durumu/IDFA kaybolmasın).
+    static let transientTokenLimit = 6
 
     private let env: Environment
     private var sink: AttributionSink?
@@ -192,15 +223,26 @@ actor AttributionRunner {
     private var observer: AnyObject?
     /// Tek seferlik (0.3.0) yolda bu süreçte gönderildi mi.
     private var legacySent = false
+    /// Deneme sürerken gelen istek (yeni `start`, ön plan): deneme bitince bir kez daha koşulur.
+    private var rerun = false
+    /// Son uygulanan `start`'ın sıra numarası ve her `start`'ta artan nesil (süren denemenin
+    /// `stopped` sonucu yeni bir `start`'ı geçersiz kılmasın).
+    private var lastSequence: UInt64 = 0
+    private var generation = 0
 
     init(environment: Environment) {
         self.env = environment
     }
 
-    func start(sink: AttributionSink, consent: Consent) async {
+    func start(sink: AttributionSink, consent: Consent, sequence: UInt64? = nil) async {
+        if let sequence {
+            guard sequence > lastSequence else { return }
+            lastSequence = sequence
+        }
         self.sink = sink
         self.consent = consent
         stopped = false
+        generation += 1
         if observer == nil, let observe = env.observeForeground {
             observer = observe { [weak self] in
                 Task { await self?.foreground() }
@@ -216,9 +258,22 @@ actor AttributionRunner {
     }
 
     func attempt() async {
-        guard let sink, !stopped, !running else { return }
+        guard sink != nil, !stopped else { return }
+        if running {
+            rerun = true
+            return
+        }
         running = true
-        defer { running = false }
+        repeat {
+            rerun = false
+            await attemptOnce()
+        } while rerun && !stopped
+        running = false
+    }
+
+    private func attemptOnce() async {
+        guard let sink, !stopped else { return }
+        let gen = generation
 
         guard let stateful = sink as? AttributionStateSink else {
             guard !legacySent else { return }
@@ -234,18 +289,30 @@ actor AttributionRunner {
             return
         case .present(let s):
             state = s
-        case .absent(let priorLaunch):
-            state = fresh()
-            if priorLaunch {
-                // 0.3.0'dan yükseltme: bu cihaz sinyalini (büyük olasılıkla) zaten gönderdi. Aksi hâlde
-                // güncellemeyi alan her eski kullanıcı bugün tarihli bir "kurulum" sinyali gönderirdi.
+        case .absent:
+            if let memory {
+                // Bu süreçte rızasız (bellekte) başlamış sinyal: rıza gelince aynen diske taşınır,
+                // ikinci bir sinyal açılmaz.
+                state = memory
+            } else if installedWithin(Self.freshInstallWindowMs) {
+                state = fresh()
+            } else {
+                // Eski kurulum (0.3.0'dan yükseltme ya da SDK'yı yeni alan uygulama): sinyal gitmiş
+                // sayılır. Aksi hâlde her eski kullanıcı bugün tarihli bir "kurulum" gönderirdi.
+                state = fresh()
                 state.pending = false
                 state.sentAttStatus = consent.allowsAttStatus ? env.signals.attStatus() : nil
             }
             await stateful.saveAttributionState(state)
         case .unavailable:
             persistent = false
-            state = memory ?? fresh()
+            if let memory {
+                state = memory
+            } else if installedWithin(Self.anonymousWindowMs) {
+                state = fresh()
+            } else {
+                return
+            }
         }
 
         if !state.pending {
@@ -268,7 +335,11 @@ actor AttributionRunner {
             state.firstSignalAtMs = env.nowMs()
         }
 
-        let c = Attribution.collect(consent: consent, signals: env.signals)
+        var c = Attribution.collect(consent: consent, signals: env.signals)
+        if c.tokenTransient, state.attempts + 1 >= Self.transientTokenLimit {
+            // Token üretimi kalıcı olarak düşüyor: ATT durumu/IDFA token'sız gitsin.
+            c.tokenTransient = false
+        }
         if c.tokenTransient {
             state.attempts += 1
             await store(state, persistent: persistent, stateful)
@@ -295,7 +366,8 @@ actor AttributionRunner {
             backoffStep = 0
             await store(state, persistent: persistent, stateful)
         case .stopped:
-            stopped = true
+            // Bu deneme sürerken yeni bir `start` geldiyse onun kararı geçerlidir.
+            if gen == generation { stopped = true }
         case .retryLater:
             state.attempts += 1
             await store(state, persistent: persistent, stateful)
@@ -322,6 +394,20 @@ actor AttributionRunner {
         // Durumsuz gitmiş (rıza durumu okumaya izin vermiyordu) ve şimdi okunabiliyor: rıza genişledi.
         // Devralınan kayıtta (`sentRoute == nil`) gönderilmez.
         return s.sentRoute != nil
+    }
+
+    /// Kurulum bu süreden genç mi. Kurulum anı bilinmiyorsa `true` (sinyal kaybolmasın).
+    private func installedWithin(_ windowMs: Int64) -> Bool {
+        guard let installed = env.installedAtMs() else { return true }
+        return env.nowMs() - installed <= windowMs
+    }
+
+    /// Uygulama kabının `Library` dizininin oluşturulma anı. Salt okuma; hiçbir iz bırakmaz.
+    static func liveInstalledAtMs() -> Int64? {
+        guard let lib = FileManager.default.urls(for: .libraryDirectory, in: .userDomainMask).first,
+              let date = (try? lib.resourceValues(forKeys: [.creationDateKey]))?.creationDate
+        else { return nil }
+        return Int64(date.timeIntervalSince1970 * 1000)
     }
 
     private func fresh() -> AttributionState {
@@ -362,11 +448,12 @@ actor AttributionRunner {
     static let liveForegroundObserver: @Sendable (@escaping @Sendable () -> Void) -> AnyObject? = { handler in
         #if canImport(UIKit) && !os(watchOS)
         let name = UIApplication.didBecomeActiveNotification
+        return NotificationCenter.default.addObserver(forName: name, object: nil, queue: nil) { _ in handler() }
         #elseif canImport(AppKit)
         let name = NSApplication.didBecomeActiveNotification
+        return NotificationCenter.default.addObserver(forName: name, object: nil, queue: nil) { _ in handler() }
         #else
         return nil
         #endif
-        return NotificationCenter.default.addObserver(forName: name, object: nil, queue: nil) { _ in handler() }
     }
 }

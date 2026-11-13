@@ -38,9 +38,9 @@ package enum AttributionStateLoad: Sendable, Equatable {
     case unavailable
     /// Kayıt var olabilir ama okunamadı (veri koruması): bu tur atlanır.
     case unreadable
-    /// Kayıt yok. `priorLaunch`: bu süreç başlamadan önce SDK bu cihazda en az bir kez açılmıştı
-    /// (yaşam döngüsü durumu vardı) — 0.3.0'dan yükseltme (SPEC §8.2, geçiş).
-    case absent(priorLaunch: Bool)
+    /// Kayıt yok. Yeni bir sinyal mi yoksa eski bir kurulum mu olduğuna çağıran kurulumun yaşıyla
+    /// karar verir (SPEC §8.2, geçiş).
+    case absent
     case present(AttributionState)
 }
 
@@ -63,8 +63,9 @@ struct AttributionStateStore: Sendable {
         case value(AttributionState)
     }
 
-    /// Salt okuma: dizin ya da dosya yaratmaz. Ayrıştırılamayan kayıt yok sayılır (yeniden
-    /// yazılır); token taşımadığı için kaybı yalnız tekrar ayıklamasını bir kez bozar.
+    /// Salt okuma: dizin ya da dosya yaratmaz. Ayrıştırılamayan kayıt yok sayılır: genç kurulumda
+    /// sinyal yeni `insert_id` ile yeniden açılır (sunucu aynı cihazın 30 gün içindeki ikinci
+    /// token'ını Apple'a sormaz), eski kurulumda gitmiş sayılır.
     func load() -> Loaded {
         let data: Data
         if usesDefaults {

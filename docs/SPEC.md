@@ -161,18 +161,23 @@ Sinyal kurulum başına bir kez **ve kesin** gitmelidir: token 24 saat yaşar, k
 | Kural | Davranış |
 |---|---|
 | Çağrı | Uygulama `Attribution.start(sink:consent:)`'ı **her açılışta** çağırır; "bir kez" korumasını uygulama yazmaz |
-| Kalıcı durum | `pending`, `insert_id`, `first_signal_at_ms`, son gönderilen ATT durumu ve rota, deneme sayısı. iOS/macOS'ta `<queueDirectory>/attribution` (yedekten hariç, atomik), tvOS'ta `UserDefaults` `cz_attribution_state`. **Token ve IDFA yazılmaz.** Yalnız `analytics` rızasıyla yazılır; rıza geri alınınca kuyrukla birlikte silinir. Rızasızken durum süreç belleğindedir |
-| Deneme anları | `start`; her `didBecomeActive`; aynı süreçte geçici sonuçtan sonra 5 sn, 30 sn, 2 dk, 10 dk. Sonra bir sonraki ön plana geliş. Aynı anda tek deneme |
+| Kalıcı durum | `pending`, `insert_id`, `first_signal_at_ms`, son gönderilen ATT durumu ve rota, deneme sayısı. iOS/macOS'ta `<queueDirectory>/attribution` (yedekten hariç, atomik), tvOS'ta `UserDefaults` `cz_attribution_state`. **Token ve IDFA yazılmaz.** Yalnız `analytics` rızasıyla yazılır; rıza geri alınınca kuyrukla birlikte silinir. Rızasızken durum süreç belleğindedir; aynı süreçte rıza gelince bellekteki durum diske taşınır (ikinci sinyal açılmaz) |
+| Kurulum yaşı | İz bırakmadan okunur: uygulama kabının `Library` dizininin oluşturulma anı (güncellemede değişmez). Bilinmiyorsa "genç" sayılır |
+| Rızasız | Durum yazılamadığı için sinyal yalnız kurulumdan sonraki **15 dakika** içinde açılır (geri çekilme basamaklarını kapsar); daha sonraki rızasız açılışlar göndermez |
+| Deneme anları | `start`; her `didBecomeActive`; aynı süreçte geçici sonuçtan sonra 5 sn, 30 sn, 2 dk, 10 dk. Sonra bir sonraki ön plana geliş. Aynı anda tek deneme; deneme sürerken gelen çağrı (yeni rıza, ön plan) deneme bitince bir kez daha koşar. Art arda `start` çağrıları çağrı sırasıyla uygulanır |
 | Zarf | `insert_id` sinyal başına bir kez üretilir, tekrarlarda **değişmez**; `time` = `first_signal_at_ms`; `sent_at` = isteğin anı (PROTOCOL §9). Sunucu tekrarı ayıklar, olay zamanı kurulum anı kalır |
 | 6 gün | Bekleyen sinyal 6 günden eskiyse yeni `insert_id` ve şimdiki zamanla gider (sunucu 7 günden eski olay zamanını düşürür) |
 | Sonuç | `2xx` → bitti. `400` → bitti (gövde kalıcı reddedildi). `401/403` ya da SDK kurulmamış → bu süreçte durur, sonraki `start`'ta yeniden. Diğer her şey (ağ, `5xx`, `429`, kimlikli uçta henüz `device_id` yok) → bekliyor |
 | Yeni sinyal | Gitmiş sinyalden sonra yalnız: ATT durumu son gidenden farklıysa, durumsuz gitmiş sinyalde durum okunabilir hâle geldiyse (rıza genişledi) ya da kimliksiz gitmiş sinyalde kimlikli yol açıldıysa |
-| 0.3.0'dan geçiş | Durum kaydı yokken SDK'nın yaşam döngüsü durumu süreç başında **zaten varsa** cihaz 0.3.0'la açılmıştır: sinyal gitmiş sayılır (o anki ATT durumu kaydedilir), gönderilmez. Kilitli cihazda okunamayan durum kaydında deneme atlanır |
+| Kayıt yokken | Kurulum **30 günden** gençse yeni sinyal açılır; daha eskiyse (0.3.0'dan yükseltme, SDK'yı yeni alan uygulama) sinyal gitmiş sayılır ve o anki ATT durumu kaydedilir. 30 gün Apple'ın tıklama penceresi; bu pencerede ikinci sinyal gitse de sunucu aynı cihazın 30 gün içindeki ikinci token'ını Apple'a sormaz. Kilitli cihazda okunamayan kayıtta deneme atlanır |
+| Kalıcı token hatası | Token üretimi 6 denemede geçici hatayla düştüyse sinyal token'sız gider (ATT durumu ve IDFA kaybolmasın) |
 | Kendi sink'i | `AttributionSink`'i kendisi uygulayan host'ta kalıcı durum ve tekrar yoktur: süreç başına tek gönderim (0.3.0 davranışı) |
 | Deneme yolu | Yalnız `DEBUG` derlemede `Attribution.debugSendFreshToken(sink:consent:)`: durumdan bağımsız, taze token ve yeni `insert_id` (geç token'ın aynı kurulumu çözüp çözmediğini denemek için; cizeylem-1 BACKLOG ASA.2) |
 
 Bilinen sınırlar: kurulup hiç açılmayan uygulamanın sinyali kaybolabilir (arka plan görevi yok); 6 günden uzun
-bekleyen sinyal kurulum anını taşımaz; 0.3.0'da gönderimi başarısız olmuş eski kurulumlar kurtarılmaz.
+bekleyen sinyal kurulum anını taşımaz; 0.3.0'da gönderimi başarısız olmuş 30 günden eski kurulumlar kurtarılmaz;
+rızasız kullanıcı kurulumdan sonraki ilk 15 dakikada uygulamayı yeniden açarsa ikinci bir kimliksiz sinyal gidebilir
+(rızasız iz yazılamaz); attribution isteği sürerken SDK'nın komut sırası bekler (0.3.0'dan beri).
 
 ## 9. Kabul kriterleri
 

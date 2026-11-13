@@ -126,8 +126,11 @@ Attribution.start(sink: Cizeylem.attributionSink, consent: consent)
   yeniden gitmez; ATT durumu değişince (ör. izin sonradan verildi) SDK yeni sinyali kendisi gönderir. Durum
   yalnız `analytics` rızası varken diske yazılır; rızasız kimliksiz yolda tekrar yalnız o süreç boyunca sürer.
 - **0.3.0'dan geçiş:** `start`'ı "ATT durumu değişti mi" gibi bir korumanın arkasından çıkarıp her açılışta
-  çağırın. 0.3.0 ile en az bir kez açılmış cihazlar sinyali yeniden göndermez (aksi hâlde eski kullanıcılar
-  güncelleme günü "yeni kurulum" görünürdü); 0.3.0'da gönderimi başarısız olmuş eski kurulumlar kurtarılmaz.
+  çağırın. 30 günden eski kurulumlar sinyali yeniden göndermez (aksi hâlde eski kullanıcılar güncelleme günü
+  "yeni kurulum" görünürdü). Rıza yokken sinyal yalnız kurulumdan sonraki ilk 15 dakikada gider.
+- **`Cizeylem.attributionSink`'i kullanın.** `AttributionSink`'i kendiniz uygular ya da sarmalarsanız kalıcı
+  durum ve tekrar devre dışı kalır: SDK süreç başına bir kez gönderir (0.3.0 davranışı). Bu durumda "bir kez"
+  korumasını kendiniz tutmalısınız.
 
 - SDK ATT iznini **istemez**, yalnız durumu okur. İzni ve sırasını uygulama yönetir: önce uygulama içi rıza
   ekranı, sonra ATT, o da yalnız `adSharing` verildiyse. ATT hukuki rıza yerine geçmez.

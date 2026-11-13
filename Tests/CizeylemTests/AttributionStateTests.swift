@@ -55,7 +55,7 @@ final class AttributionStateTests: XCTestCase {
         await core.start()
         await core.setConsent(Consent(analytics: true))
         let first = await core.loadAttributionState()
-        XCTAssertEqual(first, .absent(priorLaunch: false))
+        XCTAssertEqual(first, .absent)
         let saved = await core.saveAttributionState(sample)
         XCTAssertTrue(saved)
         // Yeni süreç: aynı dizin.
@@ -77,25 +77,6 @@ final class AttributionStateTests: XCTestCase {
         await core.setConsent(Consent(analytics: true))
         let load = await core.loadAttributionState()
         if case .present = load { XCTFail("rıza geri alındıktan sonra eski durum dönmemeli") }
-    }
-
-    func testOncekiAcilisYasamDongusuDurumundanTaninir() async throws {
-        // 0.3.0 bu cihazda açılmış: yaşam döngüsü durumu var, attribution durumu yok.
-        try Data(#"{"version":"1.0","build":"1"}"#.utf8).write(to: lifecycleURL)
-        let core = make(RecordingSender())
-        await core.start()
-        await core.setConsent(Consent(analytics: true))
-        let load = await core.loadAttributionState()
-        XCTAssertEqual(load, .absent(priorLaunch: true))
-    }
-
-    func testIlkAcilistaGozlemcininYazdigiDurumOncekiAcilisSayilmaz() async {
-        // Süreç içinde gözlemci yaşam döngüsü durumunu yazar; karar süreç başındaki hâle göre verilir.
-        let core = make(RecordingSender())
-        await core.start()
-        await core.setConsent(Consent(analytics: true))
-        let load = await core.loadAttributionState()
-        XCTAssertEqual(load, .absent(priorLaunch: false))
     }
 
     func testZarfAlanlariGovdeyeGirerCagiraninkiEzilir() async {

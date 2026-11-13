@@ -191,20 +191,34 @@ sunucu o an `5xx` döndüyse ya da token üretimi `networkError` aldıysa kurulu
 - **Rızasız iz yok kuralı korunur.** Durum yalnız `analytics` rızasıyla yazılır, `queueDirectory` altında durur ve
   `Core.erase` ile silinir (tvOS anahtarı silme listesine eklendi). Rızasız kimliksiz yolda durum süreç belleğinde:
   plan B1'in "her durumda diskte" varsayımı bu kuralla çelişiyordu.
-- **0.3.0'dan geçiş.** `Core.init` yaşam döngüsü durumunu gözlemci yazmadan önce bir kez okur (`priorLaunch`).
-  Kayıt varsa ve attribution durumu yoksa sinyal gitmiş sayılır. Okunamayan kayıt "vardı" sayılır (güvenli yön:
-  yeniden göndermemek).
+- **Kayıt yokken karar kurulum yaşıyla.** İlk sürüm yaşam döngüsü kaydının varlığına bakıyordu (`priorLaunch`);
+  gözden geçirme bunun yanlış olduğunu gerçek `Core`'la gösterdi: 0.4.0'ın kendisi de o kaydı yazdığı için "ilk
+  süreçte rıza sonradan verildi, sinyal gidemedi" cihazı ikinci süreçte 0.3.0 kullanıcısı sanılıp sinyal hiç
+  gitmiyordu. Yerine kurulum anı (uygulama kabının `Library` dizininin oluşturulma tarihi; iz bırakmaz, güncellemede
+  değişmez): 30 günden genç → yeni sinyal, eski → gitmiş sayılır. SDK'yı yeni alan uygulamanın eski kullanıcıları da
+  böylece "bugün kurulmuş" görünmez.
+- **Rızasız yol.** Durum yazılamadığı için ilk sürüm her açılışta yeni bir kimliksiz sinyal gönderiyordu (gözden
+  geçirme, doğrulandı). Artık yalnız kurulumdan sonraki 15 dakikada açılır. Aynı süreçte rıza gelince bellekteki
+  durum diske taşınır; ikinci sinyal açılmaz (gözden geçirme, doğrulandı).
+- **Deneme sürerken gelen çağrı** (yeni rıza, ön plan) kaybolmaz: `rerun` bayrağıyla deneme bitince bir kez daha
+  koşar; süren denemenin `stopped` sonucu yeni bir `start`'ı geçersiz kılmaz (nesil sayacı). `Attribution.start`
+  çağrı anında sıra numarası alır, ters sırayla koşan görev eski rızaya dönmez.
+- **Kalıcı token hatası.** 6 denemeden sonra sinyal token'sız gider (ATT durumu/IDFA kaybolmasın).
+- **Bilinen, düzeltilmeyen:** attribution isteği sürerken `CommandPipe` bekler (`.query` istek bitene kadar
+  sırayı tutar; 0.3.0'dan beri, 0.4.0'da daha sık). Olay kaybolmaz, `await` eden çağrılar gecikir.
 - **Token hatası.** `AdServicesToken.read()` artık `TokenRead` döner: `platformNotSupported` → `.unavailable`
   (token'sız gider), `networkError` / `internalError` / bilinmeyen → `.transient` (o deneme gönderilmez). Eski
   "Apple Search Ads dışı kurulumlarda fırlatır" yorumu yanlıştı (Apple: her kurulum token üretir).
 - **Eşzamanlılık.** Aynı anda tek deneme (`running`); zamanlanmış tekrar `retryPending` bayrağıyla tektir. Ön plana
   geliş geri çekilmeyi baştan başlatır.
-- **Kanıt.** `AttributionStateTests` (9, çekirdek: rızasız yazmama, kalıcılık, rıza geri alınınca silme, önceki açılış
-  tespiti, zarf alanları ve ezilmesi, sonuç eşlemesi) ve `AttributionRetryTests` (16: ağ yokken bekleyip aynı zarfla
-  gitme, her denemede taze token, yeni süreçte bekleyen sinyal, gitmişin yeniden gitmemesi, geri çekilme ve ön plan,
-  geçici token hatası, `400`/`401` davranışı, ATT değişimi, rota genişlemesi, 6 gün sınırı, 0.3.0 geçişi, okunamayan
-  durum, rızasız bellek, eşzamanlı çağrılar, tek seferlik sink). macOS `swift test -strict-concurrency=complete`:
-  477 test, 0 uyarı. **Gerçek cihazda ağsız ilk açılış senaryosu henüz denenmedi** (plan §6-4).
+- **Kanıt.** `AttributionStateTests` (7, çekirdek: rızasız yazmama, kalıcılık, rıza geri alınınca silme, zarf
+  alanları ve ezilmesi, sonuç eşlemesi), `AttributionRetryTests` (23: ağ yokken bekleyip aynı zarfla gitme, her
+  denemede taze token, yeni süreçte bekleyen sinyal, gitmişin yeniden gitmemesi, geri çekilme ve ön plan, geçici ve
+  kalıcı token hatası, `400`/`401`, ATT değişimi, rota genişlemesi, 6 gün, eski/yeni/bilinmeyen kurulum yaşı, rıza
+  sonradan, rızasız eski kurulum, okunamayan durum, rızasız bellek, eşzamanlı ve süren deneme sırasında gelen çağrı,
+  sıra numarası, tek seferlik sink) ve `AttributionCoreScenarioTests` (3, gerçek `Core` ile gözden geçirme
+  senaryoları). macOS `swift test -strict-concurrency=complete`: 485 test, 0 uyarı; iOS simülatörü ayrıca. tvOS
+  runtime'ı bu makinede yok (CI koşar). **Gerçek cihazda ağsız ilk açılış senaryosu henüz denenmedi** (plan §6-4).
 
 ## 9. Görev 14: CI, yayın ve biriken triyaj
 

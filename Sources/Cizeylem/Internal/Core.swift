@@ -243,10 +243,6 @@ actor Core {
     private let context: ContextProvider
     private let location: LifecycleLocation
     private let attributionStore: AttributionStateStore
-    /// Bu süreç başlamadan önce yaşam döngüsü durumu var mıydı (SDK bu cihazda daha önce açıldı mı).
-    /// `init`'te, gözlemci durumu yazmadan önce bir kez okunur; 0.3.0'dan yükseltmede attribution
-    /// sinyalinin yeniden gönderilmemesi buna dayanır (SPEC §8.2, geçiş).
-    private let priorLaunch: Bool
 
     private var consent = Consent()
     /// Taban adres başına bir gönderici (ingest ve izleme uçları).
@@ -298,13 +294,6 @@ actor Core {
             defaultsSuite: deps.defaultsSuite, readFile: deps.deviceIdReadFile)
         self.identityStore = IdentityStore(platform: deps.platform, defaultsSuite: deps.defaultsSuite)
         self.attributionStore = AttributionStateStore(platform: deps.platform, defaultsSuite: deps.defaultsSuite)
-        let lifecycle = deps.lifecycle
-            ?? Core.lifecycleLocation(platform: deps.platform, defaultsSuite: deps.defaultsSuite)
-        // Salt okuma (iz bırakmaz). Okunamayan kayıt "vardı" sayılır: güvenli yön sinyali
-        // yeniden üretmemektir.
-        self.priorLaunch = LifecycleStateStore(
-            url: lifecycle.url, usesDefaults: lifecycle.usesDefaults, defaultsSuite: deps.defaultsSuite
-        ).load() != .absent
         self.context = ContextProvider(
             libVersion: Cizeylem.version, platform: deps.platform, device: deps.device,
             app: deps.app, installSource: deps.installSource, network: deps.network)
@@ -762,7 +751,7 @@ actor Core {
     func loadAttributionState() -> AttributionStateLoad {
         guard consent.allowsWrite else { return .unavailable }
         switch attributionStore.load() {
-        case .absent: return .absent(priorLaunch: priorLaunch)
+        case .absent: return .absent
         case .unreadable: return .unreadable
         case .value(let s): return .present(s)
         }
