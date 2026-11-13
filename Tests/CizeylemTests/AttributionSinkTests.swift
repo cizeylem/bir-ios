@@ -258,7 +258,7 @@ final class CoreAttributionTests: XCTestCase {
         let core = make(sender)
         await core.start()
         await core.setConsent(Consent(analytics: true, attribution: true))
-        let sink = CoreAttributionSink { route, fields in await core.sendAttribution(route, fields) }
+        let sink = CoreAttributionSink(core: core)
         await sink.sendAnonymous(["adservices_token": "a", "idfa": "ZZ"])
         await sink.sendIdentified(["adservices_token": "b"])
         let calls = await sender.all()

@@ -242,6 +242,11 @@ actor Core {
     private let identityStore: IdentityStore
     private let context: ContextProvider
     private let location: LifecycleLocation
+    private let attributionStore: AttributionStateStore
+    /// Bu süreç başlamadan önce yaşam döngüsü durumu var mıydı (SDK bu cihazda daha önce açıldı mı).
+    /// `init`'te, gözlemci durumu yazmadan önce bir kez okunur; 0.3.0'dan yükseltmede attribution
+    /// sinyalinin yeniden gönderilmemesi buna dayanır (SPEC §8.2, geçiş).
+    private let priorLaunch: Bool
 
     private var consent = Consent()
     /// Taban adres başına bir gönderici (ingest ve izleme uçları).
@@ -292,6 +297,14 @@ actor Core {
             platform: deps.platform, vendorHash: deps.vendorHash, uuid: deps.uuid,
             defaultsSuite: deps.defaultsSuite, readFile: deps.deviceIdReadFile)
         self.identityStore = IdentityStore(platform: deps.platform, defaultsSuite: deps.defaultsSuite)
+        self.attributionStore = AttributionStateStore(platform: deps.platform, defaultsSuite: deps.defaultsSuite)
+        let lifecycle = deps.lifecycle
+            ?? Core.lifecycleLocation(platform: deps.platform, defaultsSuite: deps.defaultsSuite)
+        // Salt okuma (iz bırakmaz). Okunamayan kayıt "vardı" sayılır: güvenli yön sinyali
+        // yeniden üretmemektir.
+        self.priorLaunch = LifecycleStateStore(
+            url: lifecycle.url, usesDefaults: lifecycle.usesDefaults, defaultsSuite: deps.defaultsSuite
+        ).load() != .absent
         self.context = ContextProvider(
             libVersion: Cizeylem.version, platform: deps.platform, device: deps.device,
             app: deps.app, installSource: deps.installSource, network: deps.network)
@@ -566,7 +579,7 @@ actor Core {
         let defaults = deps.defaultsSuite.flatMap { UserDefaults(suiteName: $0) } ?? .standard
         for key in [
             DeviceIdStore.defaultsIdKey, DeviceIdStore.defaultsHashKey,
-            IdentityStore.defaultsKey, ConsentStore.defaultsKey,
+            IdentityStore.defaultsKey, ConsentStore.defaultsKey, AttributionStateStore.defaultsKey,
         ] {
             defaults.removeObject(forKey: key)
         }
@@ -691,8 +704,22 @@ actor Core {
     /// Kimlikli uçta çağıranın rotası yetmez: `device_id` yalnız ÇEKİRDEĞİN kendi rızası
     /// (`allowsDeviceId`) varsa girer. Rıza geri alınmış ama çağıranın elindeki kopya eskiyse
     /// kimlik yine sızmaz. Kimliksiz uçta gövde son kapıda `AttributionBody` ile süzülür.
-    func sendAttribution(_ route: AttributionRoute, _ fields: [String: PropValue]) async {
-        let raw = fields.mapValues { $0.json }
+    ///
+    /// `envelope` (SPEC §8.2) gövdeye `insert_id`, `time` ve isteğin anını `sent_at` olarak ekler;
+    /// üçü de kimlik değildir ve kimliksiz gövdede de kalır. Tekrar denemeyi çağıran yapar
+    /// (`CizeylemAttribution`), burada tek istek atılır.
+    @discardableResult
+    func sendAttribution(
+        _ route: AttributionRoute, _ fields: [String: PropValue], envelope: AttributionEnvelope? = nil
+    ) async -> AttributionDelivery {
+        var raw = fields.mapValues { $0.json }
+        // Çağıranın aynı adlı alanları ezilir: zarf yalnız buradan yazılır.
+        for k in ["insert_id", "time", "sent_at"] { raw.removeValue(forKey: k) }
+        if let envelope {
+            raw["insert_id"] = envelope.insertId
+            if let t = envelope.timeMs { raw["time"] = NSNumber(value: t) }
+            raw["sent_at"] = NSNumber(value: Int64(deps.now() * 1000))
+        }
         let path: String
         let body: String
         switch route {
@@ -702,7 +729,7 @@ actor Core {
         case .identified:
             guard consent.allowsDeviceId(on: .identified), let id = ensureDeviceId() else {
                 warn("attribution kimlikli uca gönderilmedi: rıza yok ya da device_id elde edilemedi")
-                return
+                return .retryLater
             }
             path = "/v1/attribution"
             body = AttributionBody.identified(
@@ -711,7 +738,7 @@ actor Core {
         }
         guard !body.isEmpty else {
             warn("attribution gövdesi oluşturulamadı; gönderilmedi")
-            return
+            return .rejected
         }
         // Adresi rota değil oluşan gövde belirler: IDFA gerçekten gövdedeyse izleme ucu,
         // değilse ingest ucu. Rıza bayrağına bakılmaz; ATT `authorized` değilken ya da IDFA
@@ -721,8 +748,31 @@ actor Core {
         let sender = attributionSenders[base] ?? deps.makeAttributionSender(config, base)
         attributionSenders[base] = sender
         let (outcome, _) = await sender.post(path: path, body: body)
-        // Tekrar denenmez (tek seferlik sinyal; kuyruk yok) ama sessiz de kalmaz.
         if outcome != .ok { warn("attribution gönderimi başarısız (\(path)): \(outcome)") }
+        switch outcome {
+        case .ok: return .sent
+        case .drop: return .rejected
+        case .fatal: return .stopped
+        case .retry, .split: return .retryLater
+        }
+    }
+
+    /// Kalıcı attribution durumu. Yalnız rıza kalıcı iz bırakmaya izin veriyorsa (`allowsWrite`)
+    /// diskten okunur; aksi halde `.unavailable` ve çağıran süreç belleğiyle yetinir.
+    func loadAttributionState() -> AttributionStateLoad {
+        guard consent.allowsWrite else { return .unavailable }
+        switch attributionStore.load() {
+        case .absent: return .absent(priorLaunch: priorLaunch)
+        case .unreadable: return .unreadable
+        case .value(let s): return .present(s)
+        }
+    }
+
+    /// Rızasız iz yok: `allowsWrite` kapalıyken hiçbir şey yazılmaz ve `false` döner.
+    @discardableResult
+    func saveAttributionState(_ state: AttributionState) -> Bool {
+        guard consent.allowsWrite else { return false }
+        return attributionStore.save(state)
     }
 
     func stats() async -> Stats {

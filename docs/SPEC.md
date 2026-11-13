@@ -133,7 +133,7 @@ Amplitude'un `optOut` değeri korunur. Amplitude kaydı **silinmez/değiştirilm
 
 | Sinyal | Kural |
 |---|---|
-| AdServices token | `attributionToken()`, `#if !os(tvOS)`; sunucu çözer. Rıza yoksa kimliksiz uca |
+| AdServices token | `attributionToken()`, `#if !os(tvOS)`; sunucu çözer (cizeylem-1 `PROTOCOL.md` §9.1). Rıza yoksa kimliksiz uca. Her denemede taze üretilir, diske yazılmaz. Hata yalnız `networkError` / `internalError` (geçici, sonra yeniden) ve `platformNotSupported` (token'sız gider); Apple Ads dışı kurulum da token üretir |
 | ATT durumu | **Okunur**, istenmez. `att_status` alanına yazılır |
 | IDFA | Yalnız ATT `authorized` **ve** `adSharing` |
 | SKAN / AAK yazıcı | İlk açılışta `updateConversionValue`; uzaktan, sürümlü JSON şema; fine/coarse/lockWindow. **Varsayılan KAPALI** — paralel testte AppsFlyer yazar (K8) |
@@ -151,8 +151,28 @@ tvOS'ta AdServices / AdAttributionKit / SKAdNetwork **yoktur**.
 
 Kural: adresi rota değil **oluşan gövde** belirler (`AttributionBody.carriesIdfa`). Gövde tek düz JSON
 nesnesidir, gzip'lenir, yetki `Authorization: Bearer <write_key>`. Sunucu sinyali `$attribution` olayı
-olarak saklar. İzleme adresi ayrıdır çünkü iOS 17+ `NSPrivacyTrackingDomains`'teki host'ları ATT izni
+olarak saklar ve token'ı 24 saat içinde Apple'a sorar; sonuç `$attribution_resolved` olayıdır (PROTOCOL §9.1). İzleme adresi ayrıdır çünkü iOS 17+ `NSPrivacyTrackingDomains`'teki host'ları ATT izni
 vermemiş kullanıcıda engeller; uygulama listeye yalnız `trackingEndpoint` host'unu yazar (README).
+
+### 8.2 Teslim garantisi (0.4.0)
+
+Sinyal kurulum başına bir kez **ve kesin** gitmelidir: token 24 saat yaşar, kaybolan sinyal geri gelmez.
+
+| Kural | Davranış |
+|---|---|
+| Çağrı | Uygulama `Attribution.start(sink:consent:)`'ı **her açılışta** çağırır; "bir kez" korumasını uygulama yazmaz |
+| Kalıcı durum | `pending`, `insert_id`, `first_signal_at_ms`, son gönderilen ATT durumu ve rota, deneme sayısı. iOS/macOS'ta `<queueDirectory>/attribution` (yedekten hariç, atomik), tvOS'ta `UserDefaults` `cz_attribution_state`. **Token ve IDFA yazılmaz.** Yalnız `analytics` rızasıyla yazılır; rıza geri alınınca kuyrukla birlikte silinir. Rızasızken durum süreç belleğindedir |
+| Deneme anları | `start`; her `didBecomeActive`; aynı süreçte geçici sonuçtan sonra 5 sn, 30 sn, 2 dk, 10 dk. Sonra bir sonraki ön plana geliş. Aynı anda tek deneme |
+| Zarf | `insert_id` sinyal başına bir kez üretilir, tekrarlarda **değişmez**; `time` = `first_signal_at_ms`; `sent_at` = isteğin anı (PROTOCOL §9). Sunucu tekrarı ayıklar, olay zamanı kurulum anı kalır |
+| 6 gün | Bekleyen sinyal 6 günden eskiyse yeni `insert_id` ve şimdiki zamanla gider (sunucu 7 günden eski olay zamanını düşürür) |
+| Sonuç | `2xx` → bitti. `400` → bitti (gövde kalıcı reddedildi). `401/403` ya da SDK kurulmamış → bu süreçte durur, sonraki `start`'ta yeniden. Diğer her şey (ağ, `5xx`, `429`, kimlikli uçta henüz `device_id` yok) → bekliyor |
+| Yeni sinyal | Gitmiş sinyalden sonra yalnız: ATT durumu son gidenden farklıysa, durumsuz gitmiş sinyalde durum okunabilir hâle geldiyse (rıza genişledi) ya da kimliksiz gitmiş sinyalde kimlikli yol açıldıysa |
+| 0.3.0'dan geçiş | Durum kaydı yokken SDK'nın yaşam döngüsü durumu süreç başında **zaten varsa** cihaz 0.3.0'la açılmıştır: sinyal gitmiş sayılır (o anki ATT durumu kaydedilir), gönderilmez. Kilitli cihazda okunamayan durum kaydında deneme atlanır |
+| Kendi sink'i | `AttributionSink`'i kendisi uygulayan host'ta kalıcı durum ve tekrar yoktur: süreç başına tek gönderim (0.3.0 davranışı) |
+| Deneme yolu | Yalnız `DEBUG` derlemede `Attribution.debugSendFreshToken(sink:consent:)`: durumdan bağımsız, taze token ve yeni `insert_id` (geç token'ın aynı kurulumu çözüp çözmediğini denemek için; cizeylem-1 BACKLOG ASA.2) |
+
+Bilinen sınırlar: kurulup hiç açılmayan uygulamanın sinyali kaybolabilir (arka plan görevi yok); 6 günden uzun
+bekleyen sinyal kurulum anını taşımaz; 0.3.0'da gönderimi başarısız olmuş eski kurulumlar kurtarılmaz.
 
 ## 9. Kabul kriterleri
 

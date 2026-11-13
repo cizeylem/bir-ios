@@ -45,7 +45,7 @@ final class AttributionTests: XCTestCase {
         init(token: String? = "tok", status: String = "authorized", idfa: String? = nil) {
             let t = tokenReads, s = statusReads, i = idfaReads
             signals = Attribution.Signals(
-                token: { t.hit(); return token },
+                token: { t.hit(); return token.map(TokenRead.token) ?? .unavailable },
                 attStatus: { s.hit(); return status },
                 idfa: { i.hit(); return idfa })
         }
@@ -198,7 +198,7 @@ final class AttributionTests: XCTestCase {
         await core.start()
         let consent = Consent(adSharing: true)
         await core.setConsent(consent)
-        let sink = CoreAttributionSink { route, fields in await core.sendAttribution(route, fields) }
+        let sink = CoreAttributionSink(core: core)
         await Attribution.run(sink: sink, consent: consent, signals: Probe(idfa: realIdfa).signals)
         let calls = await sender.all()
         XCTAssertEqual(calls.count, 1)

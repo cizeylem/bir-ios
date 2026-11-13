@@ -114,11 +114,20 @@ WindowGroup {
 import Cizeylem
 import CizeylemAttribution
 
-// Rıza değiştiğinde yeniden çağrılır: `consent` o anki rızanın kopyasıdır.
+// HER AÇILIŞTA çağrılır (ve rıza değişince yeniden): `consent` o anki rızanın kopyasıdır.
 let consent = Consent(analytics: true, attribution: true, adSharing: false)
 Cizeylem.setConsent(consent)
 Attribution.start(sink: Cizeylem.attributionSink, consent: consent)
 ```
+
+- **Uygulamada "bir kez gönder" koruması yazmayın (0.4.0).** Sinyal sunucu `2xx` dönene kadar SDK'da
+  "bekliyor" kalır; her açılışta, uygulama ön plana her geldiğinde ve aynı oturumda geri çekilmeyle (5 sn,
+  30 sn, 2 dk, 10 dk) yeniden denenir, her denemede taze AdServices token'ı üretilir. Bir kez gitmiş sinyal
+  yeniden gitmez; ATT durumu değişince (ör. izin sonradan verildi) SDK yeni sinyali kendisi gönderir. Durum
+  yalnız `analytics` rızası varken diske yazılır; rızasız kimliksiz yolda tekrar yalnız o süreç boyunca sürer.
+- **0.3.0'dan geçiş:** `start`'ı "ATT durumu değişti mi" gibi bir korumanın arkasından çıkarıp her açılışta
+  çağırın. 0.3.0 ile en az bir kez açılmış cihazlar sinyali yeniden göndermez (aksi hâlde eski kullanıcılar
+  güncelleme günü "yeni kurulum" görünürdü); 0.3.0'da gönderimi başarısız olmuş eski kurulumlar kurtarılmaz.
 
 - SDK ATT iznini **istemez**, yalnız durumu okur. İzni ve sırasını uygulama yönetir: önce uygulama içi rıza
   ekranı, sonra ATT, o da yalnız `adSharing` verildiyse. ATT hukuki rıza yerine geçmez.

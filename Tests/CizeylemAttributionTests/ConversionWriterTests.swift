@@ -47,7 +47,7 @@ final class ConversionWriterTests: XCTestCase {
     func testVarsayilanOlarakYaziciKapali() async {
         let log = SurfaceLog()
         let probe = Counter()
-        let signals = Attribution.Signals(token: { probe.hit(); return "tok" },
+        let signals = Attribution.Signals(token: { probe.hit(); return .token("tok") },
                                           attStatus: { "authorized" }, idfa: { nil })
         let task = Attribution.startTask(sink: RecordingSink(), consent: full, signals: signals,
                                          conversion: env(log, data: goodJSON))

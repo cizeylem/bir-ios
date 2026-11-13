@@ -10,6 +10,40 @@ public protocol AttributionSink: Sendable {
     func sendAnonymous(_ fields: [String: Any]) async
 }
 
+/// Tek attribution isteğinin sonucu (çekirdekteki `Outcome`'un attribution'a dönük özeti).
+package enum AttributionDelivery: Sendable, Equatable {
+    /// Sunucu kabul etti (`2xx`): sinyal bitti.
+    case sent
+    /// Gövde kalıcı reddedildi (`400`) ya da kurulamadı: tekrar denemek düzeltmez.
+    case rejected
+    /// Geçici (ağ, `5xx`, `429`, kimlikli uçta henüz `device_id` yok): sonra tekrar.
+    case retryLater
+    /// Yazma anahtarı reddedildi (`401`/`403`) ya da SDK kurulmadı: bu süreçte bir daha denenmez.
+    case stopped
+}
+
+/// Tekrar denemeye hazır zarf (cizeylem-1 `PROTOCOL.md` §9): `insert_id` tekrarlarda sabit,
+/// `time` sinyalin ilk üretildiği an. `sent_at`'i çekirdek isteğin anında ekler.
+package struct AttributionEnvelope: Sendable, Equatable {
+    package let insertId: String
+    package let timeMs: Int64?
+
+    package init(insertId: String, timeMs: Int64?) {
+        self.insertId = insertId
+        self.timeMs = timeMs
+    }
+}
+
+/// Kalıcı durum ve sonuç bildiren sink (SPEC §8.2). Yalnız çekirdeğin kendi sink'i uygular;
+/// `AttributionSink`'i kendisi uygulayan bir host'ta `CizeylemAttribution` 0.3.0 gibi tek seferlik
+/// gönderime düşer. Paket içi: kamuya açık yüzey büyümez.
+package protocol AttributionStateSink: AttributionSink {
+    func loadAttributionState() async -> AttributionStateLoad
+    @discardableResult func saveAttributionState(_ state: AttributionState) async -> Bool
+    func deliver(_ route: AttributionRoute, _ fields: [String: Any], envelope: AttributionEnvelope) async
+        -> AttributionDelivery
+}
+
 /// Attribution uçlarına tek POST atan taşıma (`Transport` uygular, testte sahtesi konur).
 protocol AttributionSending: Sendable {
     func post(path: String, body: String) async -> (Outcome, retryAfter: Double?)
@@ -94,16 +128,46 @@ enum AttributionBody {
     }
 }
 
-/// Çekirdeğe bağlanan sink. `deliver` üretimde komut hattına, testte doğrudan `Core`'a gider.
-struct CoreAttributionSink: AttributionSink {
-    let deliver: @Sendable (AttributionRoute, [String: PropValue]) async -> Void
+/// Çekirdeğe bağlanan sink. Kapanımlar üretimde komut hattına, testte doğrudan `Core`'a gider.
+package struct CoreAttributionSink: AttributionStateSink {
+    let send: @Sendable (AttributionRoute, [String: PropValue], AttributionEnvelope?) async -> AttributionDelivery
+    let load: @Sendable () async -> AttributionStateLoad
+    let save: @Sendable (AttributionState) async -> Bool
 
-    // `Any` actor sınırını geçemez: alanlar çağıranın thread'inde düz değere çevrilir.
-    func sendIdentified(_ fields: [String: Any]) async {
-        await deliver(.identified, PropValue.map(fields))
+    init(
+        send: @escaping @Sendable (AttributionRoute, [String: PropValue], AttributionEnvelope?) async -> AttributionDelivery,
+        load: @escaping @Sendable () async -> AttributionStateLoad = { .unavailable },
+        save: @escaping @Sendable (AttributionState) async -> Bool = { _ in false }
+    ) {
+        self.send = send
+        self.load = load
+        self.save = save
     }
 
-    func sendAnonymous(_ fields: [String: Any]) async {
-        await deliver(.anonymous, PropValue.map(fields))
+    /// Testlerin `Core`'a doğrudan bağlanan sink'i.
+    init(core: Core) {
+        self.init(
+            send: { route, fields, envelope in await core.sendAttribution(route, fields, envelope: envelope) },
+            load: { await core.loadAttributionState() },
+            save: { await core.saveAttributionState($0) })
+    }
+
+    // `Any` actor sınırını geçemez: alanlar çağıranın thread'inde düz değere çevrilir.
+    package func sendIdentified(_ fields: [String: Any]) async {
+        _ = await send(.identified, PropValue.map(fields), nil)
+    }
+
+    package func sendAnonymous(_ fields: [String: Any]) async {
+        _ = await send(.anonymous, PropValue.map(fields), nil)
+    }
+
+    package func loadAttributionState() async -> AttributionStateLoad { await load() }
+
+    @discardableResult
+    package func saveAttributionState(_ state: AttributionState) async -> Bool { await save(state) }
+
+    package func deliver(_ route: AttributionRoute, _ fields: [String: Any], envelope: AttributionEnvelope) async
+        -> AttributionDelivery {
+        await send(route, PropValue.map(fields), envelope)
     }
 }

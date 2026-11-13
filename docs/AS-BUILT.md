@@ -162,7 +162,7 @@ yerine geçer). `bir-js` ikiye katlar (1, 2, 4, … 256, 300). Android iOS ile a
   türlerini `Linked=true`, `Tracking=false`, amaç `Analytics` olarak beyan eder.
 - Kapılar (`AttributionRoute`, `allowsIdfa` vb.) iki modül arasında kullanılsın diye `package` erişimli
   (public API değil).
-- tvOS: AdServices/AdAttributionKit/SKAdNetwork yok; `AdServicesToken.read()` `nil`, `TrackingStatus` `unavailable`.
+- tvOS: AdServices/AdAttributionKit/SKAdNetwork yok; `AdServicesToken.read()` `.unavailable` (0.4.0'dan önce `nil`), `TrackingStatus` `unavailable`.
 - Alan adları (`adservices_token`, `att_status`, `idfa`, `device_id`) ve uç yolları (`/v1/attribution`,
   `/v1/attribution/anon`) 0.3.0 itibarıyla sunucu sözleşmesine bağlandı (cizeylem-1 `docs/PROTOCOL.md` §9).
   0.3.0'dan önce sunucuda bu uçlar yoktu: gönderilen attribution 404 alıp kayboluyordu.
@@ -177,6 +177,34 @@ yerine geçer). `bir-js` ikiye katlar (1, 2, 4, … 256, 300). Android iOS ile a
 - Taban adres başına bir gönderici önbelleklenir (`makeAttributionSender(config, base)`).
 - Kanıt: `TrackingEndpointTests` (11 test; macOS `swift test` yeşil). Kaynak taraması host adlarının yalnız
   `Configuration.swift`'te geçtiğini doğrular. **Gerçek cihazda ATT reddedilmiş/verilmiş senaryo henüz denenmedi.**
+
+## 8d. Teslim garantisi (0.4.0, SPEC §8.2)
+
+Plan: cizeylem-1 `docs/PLAN-BIR-IOS-ATTRIBUTION.md` (BACKLOG ASA.1). 0.3.0 sinyali bir kez gönderiyordu; ağ yoksa,
+sunucu o an `5xx` döndüyse ya da token üretimi `networkError` aldıysa kurulumun reklam bağlantısı kayboluyordu.
+
+- **Yapı.** Durum ve taşıma çekirdekte (`AttributionStateStore`, `Core.loadAttributionState` /
+  `saveAttributionState`, `Core.sendAttribution(…, envelope:)` sonuç döner); tekrar mantığı attribution modülünde
+  (`AttributionRunner` actor'ü: `start`, ön plan gözlemcisi, geri çekilme). Aradaki köprü `package` erişimli
+  `AttributionStateSink`: kamuya açık yüzey büyümedi. `AttributionSink`'i kendisi uygulayan host 0.3.0 gibi tek
+  seferlik gönderime düşer.
+- **Rızasız iz yok kuralı korunur.** Durum yalnız `analytics` rızasıyla yazılır, `queueDirectory` altında durur ve
+  `Core.erase` ile silinir (tvOS anahtarı silme listesine eklendi). Rızasız kimliksiz yolda durum süreç belleğinde:
+  plan B1'in "her durumda diskte" varsayımı bu kuralla çelişiyordu.
+- **0.3.0'dan geçiş.** `Core.init` yaşam döngüsü durumunu gözlemci yazmadan önce bir kez okur (`priorLaunch`).
+  Kayıt varsa ve attribution durumu yoksa sinyal gitmiş sayılır. Okunamayan kayıt "vardı" sayılır (güvenli yön:
+  yeniden göndermemek).
+- **Token hatası.** `AdServicesToken.read()` artık `TokenRead` döner: `platformNotSupported` → `.unavailable`
+  (token'sız gider), `networkError` / `internalError` / bilinmeyen → `.transient` (o deneme gönderilmez). Eski
+  "Apple Search Ads dışı kurulumlarda fırlatır" yorumu yanlıştı (Apple: her kurulum token üretir).
+- **Eşzamanlılık.** Aynı anda tek deneme (`running`); zamanlanmış tekrar `retryPending` bayrağıyla tektir. Ön plana
+  geliş geri çekilmeyi baştan başlatır.
+- **Kanıt.** `AttributionStateTests` (9, çekirdek: rızasız yazmama, kalıcılık, rıza geri alınınca silme, önceki açılış
+  tespiti, zarf alanları ve ezilmesi, sonuç eşlemesi) ve `AttributionRetryTests` (16: ağ yokken bekleyip aynı zarfla
+  gitme, her denemede taze token, yeni süreçte bekleyen sinyal, gitmişin yeniden gitmemesi, geri çekilme ve ön plan,
+  geçici token hatası, `400`/`401` davranışı, ATT değişimi, rota genişlemesi, 6 gün sınırı, 0.3.0 geçişi, okunamayan
+  durum, rızasız bellek, eşzamanlı çağrılar, tek seferlik sink). macOS `swift test -strict-concurrency=complete`:
+  477 test, 0 uyarı. **Gerçek cihazda ağsız ilk açılış senaryosu henüz denenmedi** (plan §6-4).
 
 ## 9. Görev 14: CI, yayın ve biriken triyaj
 

@@ -34,7 +34,7 @@ final class TrackingStatusTests: XCTestCase {
 
     func testTvOSTaAdServicesTokenNilVeDurumUnavailable() {
         #if os(tvOS)
-        XCTAssertNil(AdServicesToken.read())
+        XCTAssertEqual(AdServicesToken.read(), .unavailable)
         XCTAssertEqual(TrackingStatus.current(), "unavailable")
         #endif
     }

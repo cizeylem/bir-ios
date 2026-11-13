@@ -16,7 +16,7 @@ import AppKit
 public enum Cizeylem {
     /// SDK sürümü (`context.lib_version`). Tek kaynak: depo kökündeki `VERSION` dosyası;
     /// `CizeylemTests.testLibVersionSurumKaynagiylaAyni` ikisinin ayrışmasını engeller.
-    public static let version = "0.3.0"
+    public static let version = "0.4.0"
 
     private static let pipe = CommandPipe()
 
@@ -124,16 +124,34 @@ public enum Cizeylem {
 
     /// `CizeylemAttribution` modülünün çıktısını çekirdeğe taşır. `initialize` çağrılmadan
     /// kullanılırsa sinyal sessizce düşer.
+    ///
+    /// Kalıcı "bekliyor" durumu ve tekrar deneme (SPEC §8.2) bu sink üzerinden çekirdekte durur:
+    /// durum yalnız rıza kalıcı iz bırakmaya izin veriyorsa diske yazılır.
     public static var attributionSink: AttributionSink {
         let pipe = pipe
-        return CoreAttributionSink { route, fields in
-            await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
-                pipe.send(.query { core in
-                    await core?.sendAttribution(route, fields)
-                    continuation.resume()
-                })
-            }
-        }
+        return CoreAttributionSink(
+            send: { route, fields, envelope in
+                await withCheckedContinuation { (continuation: CheckedContinuation<AttributionDelivery, Never>) in
+                    pipe.send(.query { core in
+                        guard let core else { return continuation.resume(returning: .stopped) }
+                        continuation.resume(returning: await core.sendAttribution(route, fields, envelope: envelope))
+                    })
+                }
+            },
+            load: {
+                await withCheckedContinuation { (continuation: CheckedContinuation<AttributionStateLoad, Never>) in
+                    pipe.send(.query { core in
+                        continuation.resume(returning: await core?.loadAttributionState() ?? .unavailable)
+                    })
+                }
+            },
+            save: { state in
+                await withCheckedContinuation { (continuation: CheckedContinuation<Bool, Never>) in
+                    pipe.send(.query { core in
+                        continuation.resume(returning: await core?.saveAttributionState(state) ?? false)
+                    })
+                }
+            })
     }
 
     // MARK: - Kontrol
